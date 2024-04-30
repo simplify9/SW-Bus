@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json;
+﻿
 using RabbitMQ.Client;
 using SW.HttpExtensions;
 using SW.PrimitiveTypes;

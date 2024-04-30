@@ -1,5 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
-using Newtonsoft.Json;
 using SW.PrimitiveTypes;
 
 namespace SW.Bus;
@@ -20,12 +21,11 @@ internal class Broadcaster : IBroadcast
 
     public Task Broadcast<TMessage>(TMessage message)
     {
-        var serializerSettings = new JsonSerializerSettings { ReferenceLoopHandling = ReferenceLoopHandling.Ignore };
-        var publishMessage = JsonConvert.SerializeObject(new BroadcastMessage
+        var serializerOptions = new JsonSerializerOptions()
         {
-            MessageTypeName = typeof(TMessage).AssemblyQualifiedName,
-            Message = JsonConvert.SerializeObject(message, serializerSettings)
-        }, serializerSettings);
+            ReferenceHandler = ReferenceHandler.IgnoreCycles
+        };
+        var publishMessage = JsonSerializer.Serialize(message,serializerOptions);
 
         return basicPublisher.Publish(nodeRoutingKey, publishMessage,exchange);
     }

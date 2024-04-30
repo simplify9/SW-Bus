@@ -1,8 +1,8 @@
 using System;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Caching.Memory;
-using Newtonsoft.Json;
 using SW.Bus.SampleWeb.Models;
 using SW.PrimitiveTypes;
 
@@ -49,7 +49,7 @@ namespace SW.Bus.SampleWeb.Pages
             
             for (int i = 0; i < total; i++)
             {
-                publish.Publish($"Msg{i + 1}", JsonConvert.SerializeObject(new { Id = Guid.NewGuid() , Value = i })).Wait();
+                publish.Publish($"Msg{i + 1}", JsonSerializer.Serialize(new { Id = Guid.NewGuid() , Value = i })).Wait();
             }
             cache.Set("total", total + 1, TimeSpan.FromDays(1));
 

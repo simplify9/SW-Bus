@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using SW.HttpExtensions;
@@ -57,7 +57,7 @@ namespace SW.Bus
 
                 else
                 {
-                    var messageObject = JsonConvert.DeserializeObject(message, consumerDefinition.MessageType);
+                    var messageObject = JsonSerializer.Deserialize(message, consumerDefinition.MessageType);
                     await (Task)consumerDefinition.Method.Invoke(svc, new[] { messageObject });
                 }
 
@@ -118,7 +118,7 @@ namespace SW.Bus
                 }
                 else
                 {
-                    consumerMessage = JsonConvert.DeserializeObject<BroadcastMessage>(message);
+                    consumerMessage = JsonSerializer.Deserialize<BroadcastMessage>(message);
                     TryBuildBusRequestContext(scope.ServiceProvider, ea.BasicProperties, remainingRetryCount);
                     
                     listenerDefinition = listeners.Single(d =>
@@ -126,7 +126,7 @@ namespace SW.Bus
                     svc = scope.ServiceProvider.GetRequiredService(listenerDefinition.ServiceType);
                     processMethod = listenerDefinition.Method;
                     failMethod = listenerDefinition.FailMethod;
-                    var messageObject = JsonConvert.DeserializeObject(message, listenerDefinition.MessageType);
+                    var messageObject = JsonSerializer.Deserialize(message, listenerDefinition.MessageType);
                     await (Task)processMethod.Invoke(svc, new[] { messageObject });
                 }
 
@@ -232,7 +232,7 @@ namespace SW.Bus
             // total bad is used in case the message was moved from bad to process (using shovel) and failed again. so we keep history of failures
             var totalBad = props.Headers.Count(c => c.Key.StartsWith(exception)) + 1;
 
-            props.Headers.Add($"{exception}{totalBad}", JsonConvert.SerializeObject(ex));
+            props.Headers.Add($"{exception}{totalBad}", JsonSerializer.Serialize(ex));
 
             props.DeliveryMode = 2;
             model.BasicPublish(exchange, routingKey, props, body);

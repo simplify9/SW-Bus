@@ -1,8 +1,9 @@
 using System.Collections.Generic;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
-using Newtonsoft.Json;
 using RabbitMQ.Client;
 using SW.HttpExtensions;
 using SW.PrimitiveTypes;
@@ -24,8 +25,12 @@ internal class BasicPublisher
 
     async public Task Publish<TMessage>(TMessage message, string exchange)
     {
-        var body = JsonConvert.SerializeObject(message,
-            new JsonSerializerSettings { ReferenceLoopHandling = ReferenceLoopHandling.Ignore });
+        var serializerOptions = new JsonSerializerOptions()
+        {
+            ReferenceHandler = ReferenceHandler.IgnoreCycles
+        };
+        var body = JsonSerializer.Serialize(message,serializerOptions);
+        
         await Publish(message.GetType().Name, body,exchange);
     }
 
