@@ -29,7 +29,7 @@ internal class BasicPublisher
         {
             ReferenceHandler = ReferenceHandler.IgnoreCycles
         };
-        var body = JsonSerializer.Serialize(message,serializerOptions);
+        var body = JsonSerializer.Serialize(message,message.GetType(), serializerOptions);
         
         await Publish(message.GetType().Name, body,exchange);
     }

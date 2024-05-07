@@ -232,7 +232,7 @@ namespace SW.Bus
             // total bad is used in case the message was moved from bad to process (using shovel) and failed again. so we keep history of failures
             var totalBad = props.Headers.Count(c => c.Key.StartsWith(exception)) + 1;
 
-            props.Headers.Add($"{exception}{totalBad}", JsonSerializer.Serialize(ex));
+            props.Headers.Add($"{exception}{totalBad}", JsonSerializer.Serialize(ex,ex.GetType()));
 
             props.DeliveryMode = 2;
             model.BasicPublish(exchange, routingKey, props, body);
