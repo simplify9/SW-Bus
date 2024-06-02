@@ -25,7 +25,11 @@ internal class Broadcaster : IBroadcast
         {
             ReferenceHandler = ReferenceHandler.IgnoreCycles
         };
-        var publishMessage = JsonSerializer.Serialize(message,message.GetType(), serializerOptions);
+        var publishMessage = JsonSerializer.Serialize(new BroadcastMessage
+        {
+            MessageTypeName = typeof(TMessage).AssemblyQualifiedName,
+            Message = JsonSerializer.Serialize(message, serializerOptions) 
+        }, serializerOptions);
 
         return basicPublisher.Publish(nodeRoutingKey, publishMessage,exchange);
     }
