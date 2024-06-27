@@ -126,7 +126,7 @@ namespace SW.Bus
                     svc = scope.ServiceProvider.GetRequiredService(listenerDefinition.ServiceType);
                     processMethod = listenerDefinition.Method;
                     failMethod = listenerDefinition.FailMethod;
-                    var messageObject = JsonSerializer.Deserialize(message, listenerDefinition.MessageType);
+                    var messageObject = JsonSerializer.Deserialize(consumerMessage.Message, listenerDefinition.MessageType);
                     await (Task)processMethod.Invoke(svc, new[] { messageObject });
                 }
 
