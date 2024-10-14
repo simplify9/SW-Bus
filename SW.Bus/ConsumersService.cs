@@ -35,9 +35,9 @@ namespace SW.Bus
             openModels = new Dictionary<string, IModel>();
         }
 
-        public Task StartAsync(CancellationToken cancellationToken)
+        public async Task StartAsync(CancellationToken cancellationToken)
         {
-            return Task.Run(()=>StartBusAsync(cancellationToken), cancellationToken);
+             Task.Run(()=>StartBusAsync(cancellationToken), cancellationToken);
         }
 
         private async Task StartBusAsync(CancellationToken cancellationToken)
