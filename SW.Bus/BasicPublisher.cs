@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Security.Claims;
 using System.Text;
@@ -36,8 +37,16 @@ internal class BasicPublisher
 
     public async Task Publish(string messageTypeName, string message,string exchange)
     {
-        var body = Encoding.UTF8.GetBytes(message);
-        await Publish(messageTypeName, body,exchange);
+        try
+        {
+            var body = Encoding.UTF8.GetBytes(message);
+            await Publish(messageTypeName, body,exchange);
+        }
+        catch (Exception e)
+        {
+            throw new Exception($"Publish message to exchange {exchange} failed {messageTypeName} : {message} ", e);
+        }
+
     }
 
     public Task Publish(string messageTypeName, byte[] message,string exchange)
