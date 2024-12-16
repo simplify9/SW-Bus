@@ -75,16 +75,15 @@ namespace SW.Bus
             var model = conn.CreateModel();
 
             return services.AddScoped(serviceProvider => new BasicPublisher(
-                model,
-                serviceProvider.GetRequiredService<BusOptions>(),
-                serviceProvider.GetRequiredService<RequestContext>()))
-            .AddScoped<IPublish, Publisher>(serviceProvider => new Publisher(
-                serviceProvider.GetRequiredService<BasicPublisher>(),
-                busOptions.ProcessExchange))
-            .AddScoped<IBroadcast, Broadcaster>(serviceProvider => new Broadcaster(
-                serviceProvider.GetRequiredService<BasicPublisher>(),
-                busOptions.NodeExchange, busOptions.NodeRoutingKey));
-
+                    model,
+                    serviceProvider.GetRequiredService<BusOptions>(),
+                    serviceProvider.GetRequiredService<RequestContext>()))
+                .AddScoped<IPublish, Publisher>(serviceProvider => new Publisher(
+                    serviceProvider.GetRequiredService<BasicPublisher>(),
+                    busOptions.ProcessExchange))
+                .AddScoped<IBroadcast, Broadcaster>(serviceProvider => new Broadcaster(
+                    serviceProvider.GetRequiredService<BasicPublisher>(),
+                    busOptions.NodeExchange, busOptions.NodeRoutingKey));
         }
 
         public static IServiceCollection AddBusPublishMock(this IServiceCollection services)
@@ -104,15 +103,15 @@ namespace SW.Bus
             if (assemblies.Length == 0) assemblies = new[] { Assembly.GetCallingAssembly() };
 
             return services.Scan(scan => scan
-                .FromAssemblies(assemblies)
-                .AddClasses(classes => classes.AssignableTo<IConsume>())
-                .As<IConsume>().AsSelf().WithScopedLifetime())
-            .Scan(scan => scan
-                .FromAssemblies(assemblies)
-                .AddClasses(classes => classes.AssignableTo(typeof(IConsume<>)))
-                .AsImplementedInterfaces().AsSelf().WithScopedLifetime())
-            .RegisterListeners(assemblies)
-            .AddConsumerService();
+                    .FromAssemblies(assemblies)
+                    .AddClasses(classes => classes.AssignableTo<IConsume>())
+                    .As<IConsume>().AsSelf().WithScopedLifetime())
+                .Scan(scan => scan
+                    .FromAssemblies(assemblies)
+                    .AddClasses(classes => classes.AssignableTo(typeof(IConsume<>)))
+                    .AsImplementedInterfaces().AsSelf().WithScopedLifetime())
+                .RegisterListeners(assemblies)
+                .AddConsumerService();
         }
 
         /// <summary>
@@ -124,12 +123,12 @@ namespace SW.Bus
         public static IServiceCollection AddBusListen(this IServiceCollection services, params Assembly[] assemblies)
         {
             if (assemblies.Length == 0) assemblies = new[] { Assembly.GetCallingAssembly() };
-            
+
             return services.Scan(scan => scan
-                .FromAssemblies(assemblies)
-                .AddClasses(classes => classes.AssignableTo(typeof(IListen<>)))
-                .AsImplementedInterfaces().AsSelf().WithScopedLifetime())
-            .AddConsumerService();
+                    .FromAssemblies(assemblies)
+                    .AddClasses(classes => classes.AssignableTo(typeof(IListen<>)))
+                    .AsImplementedInterfaces().AsSelf().WithScopedLifetime())
+                .AddConsumerService();
         }
 
 

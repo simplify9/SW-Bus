@@ -121,8 +121,13 @@ namespace SW.Bus
                     consumerMessage = JsonConvert.DeserializeObject<BroadcastMessage>(message);
                     TryBuildBusRequestContext(scope.ServiceProvider, ea.BasicProperties, remainingRetryCount);
                     
-                    listenerDefinition = listeners.Single(d =>
+                    listenerDefinition = listeners.SingleOrDefault(d =>
                         d.MessageType == Type.GetType(consumerMessage.MessageTypeName));
+                    if (listenerDefinition == null)
+                    {
+                        model.BasicAck(ea.DeliveryTag, false);
+                        return;
+                    }
                     svc = scope.ServiceProvider.GetRequiredService(listenerDefinition.ServiceType);
                     processMethod = listenerDefinition.Method;
                     failMethod = listenerDefinition.FailMethod;
