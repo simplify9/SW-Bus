@@ -121,13 +121,17 @@ namespace SW.Bus
                     consumerMessage = JsonSerializer.Deserialize<BroadcastMessage>(message);
                     TryBuildBusRequestContext(scope.ServiceProvider, ea.BasicProperties, remainingRetryCount);
                     
-                    listenerDefinition = listeners.Single(d =>
+                    listenerDefinition = listeners.SingleOrDefault(d =>
                         d.MessageType == Type.GetType(consumerMessage.MessageTypeName));
-                    svc = scope.ServiceProvider.GetRequiredService(listenerDefinition.ServiceType);
-                    processMethod = listenerDefinition.Method;
-                    failMethod = listenerDefinition.FailMethod;
-                    var messageObject = JsonSerializer.Deserialize(consumerMessage.Message, listenerDefinition.MessageType);
-                    await (Task)processMethod.Invoke(svc, new[] { messageObject });
+                    if (listenerDefinition != null)
+                    {
+                        svc = scope.ServiceProvider.GetRequiredService(listenerDefinition.ServiceType);
+                        processMethod = listenerDefinition.Method;
+                        failMethod = listenerDefinition.FailMethod;
+                        var messageObject =
+                            JsonSerializer.Deserialize(consumerMessage.Message, listenerDefinition.MessageType);
+                        await (Task)processMethod.Invoke(svc, new[] { messageObject });
+                    }
                 }
 
                 model.BasicAck(ea.DeliveryTag, false);
