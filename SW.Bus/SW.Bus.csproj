@@ -5,10 +5,16 @@
     <PackageId>SimplyWorks.Bus</PackageId>
     <Product>SimplyWorks.Bus</Product>
     <Authors>Simplify9</Authors>
+    <Description>A lightweight .NET 8 message bus library built on RabbitMQ for ASP.NET Core applications. Provides simple publish-subscribe patterns, typed consumers, broadcasting, automatic retries, and JWT integration. Visit GitHub for full documentation and examples.</Description>
+    <PackageTags>messagebus;rabbitmq;aspnetcore;messaging;pubsub;eventdriven;microservices;dotnet8</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/simplify9/Bus</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/simplify9/Bus</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/simplify9/SW-Bus</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/simplify9/SW-Bus</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
+    <RepositoryType>git</RepositoryType>
+    <Copyright>Copyright © 2020 Simplify9</Copyright>
+    <PackageReleaseNotes>See https://github.com/simplify9/SW-Bus/releases for release notes and changelog.</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,6 +29,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="..\README.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
     <None Include="..\icon.png">
       <Pack>True</Pack>
       <PackagePath></PackagePath>
