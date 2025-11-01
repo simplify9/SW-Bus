@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -18,14 +19,20 @@ namespace SW.Bus
     {
         private readonly IServiceProvider sp;
         private readonly BusOptions busOptions;
+        private readonly ConcurrentDictionary<Type, ILogger> loggerCache;
+        private readonly Func<Type, ILogger> loggerFactoryCreateLogger;
 
-        private readonly ILogger<ConsumerRunner> logger;
-
-        public ConsumerRunner(IServiceProvider sp, BusOptions busOptions, ILogger<ConsumerRunner> logger)
+        public ConsumerRunner(IServiceProvider sp, BusOptions busOptions, ILoggerFactory loggerFactory)
         {
             this.sp = sp;
             this.busOptions = busOptions;
-            this.logger = logger;
+            this.loggerCache = new ConcurrentDictionary<Type, ILogger>();
+            this.loggerFactoryCreateLogger = loggerFactory.CreateLogger;
+        }
+
+        private ILogger GetLogger(Type consumerType)
+        {
+            return loggerCache.GetOrAdd(consumerType, loggerFactoryCreateLogger);
         }
 
         internal async Task Run(BasicDeliverEventArgs ea, ConsumerDefinition consumerDefinition, IModel model)
@@ -44,9 +51,12 @@ namespace SW.Bus
             }
 
             var message = "";
+            var logger = GetLogger(consumerDefinition.ServiceType);
+            
             try
             {
                 using var scope = sp.CreateScope();
+                
                 TryBuildBusRequestContext(scope.ServiceProvider, ea.BasicProperties, remainingRetryCount);
 
                 var body = ea.Body;
@@ -62,6 +72,12 @@ namespace SW.Bus
                 }
 
                 model.BasicAck(ea.DeliveryTag, false);
+                logger.LogDebug(
+                    "Consumer: {ConsumerName} | Queue: {QueueName} | Message Type: {MessageType} | Successfully processed message | Delivery Tag: {DeliveryTag}",
+                    consumerDefinition.ServiceType.Name,
+                    consumerDefinition.QueueName,
+                    consumerDefinition.MessageTypeName,
+                    ea.DeliveryTag);
             }
             catch (Exception ex)
             {
@@ -70,15 +86,26 @@ namespace SW.Bus
                     // reject the message, will be sent to wait queue
                     model.BasicReject(ea.DeliveryTag, false);
                     logger.LogWarning(ex,
-                        @$"Failed to process message '{consumerDefinition.MessageTypeName}', in '{consumerDefinition.ServiceType.Name}'. Number of retries remaining {remainingRetryCount}.
-                            Total retries configured {consumerDefinition.RetryCount}.
-                            Message {message}");
+                        "Consumer: {ConsumerName} | Queue: {QueueName} | Message Type: {MessageType} | Failed to process message. Retries remaining: {RemainingRetries}/{TotalRetries} | Delivery Tag: {DeliveryTag} | Message: {Message}",
+                        consumerDefinition.ServiceType.Name,
+                        consumerDefinition.QueueName,
+                        consumerDefinition.MessageTypeName,
+                        remainingRetryCount,
+                        consumerDefinition.RetryCount,
+                        ea.DeliveryTag,
+                        message);
                 }
                 else
                 {
                     model.BasicAck(ea.DeliveryTag, false);
                     logger.LogError(ex,
-                        @$"Failed to process message '{consumerDefinition.MessageTypeName}', in '{consumerDefinition.ServiceType.Name}'. Message {message}, Total retries {consumerDefinition.RetryCount}");
+                        "Consumer: {ConsumerName} | Queue: {QueueName} | Message Type: {MessageType} | Failed to process message after all retries exhausted. Total retries: {TotalRetries} | Delivery Tag: {DeliveryTag} | Message: {Message}",
+                        consumerDefinition.ServiceType.Name,
+                        consumerDefinition.QueueName,
+                        consumerDefinition.MessageTypeName,
+                        consumerDefinition.RetryCount,
+                        ea.DeliveryTag,
+                        message);
 
                     await PublishBad(model, ea.Body, ea.BasicProperties, busOptions.DeadLetterExchange, consumerDefinition.BadRoutingKey, ex);
                 }
@@ -138,33 +165,41 @@ namespace SW.Bus
             }
             catch (Exception ex)
             {
+                // Get logger specific to the listener type or use default if no listener
+                var logger = listenerDefinition != null 
+                    ? GetLogger(listenerDefinition.ServiceType) 
+                    : GetLogger(typeof(ConsumerRunner));
+                
                 if (remainingRetryCount != 0)
                 {
                     // reject the message, will be sent to wait queue
                     model.BasicReject(ea.DeliveryTag, false);
-                    await RunOnFail(svc, failMethod, ex, message);
+                    await RunOnFail(svc, failMethod, ex, message, logger);
                     logger.LogWarning(ex,
-                        @$"Failed to process message '{listenerDefinition?.MessageTypeName ?? message}', 
-                        in '{listenerDefinition?.ServiceType.Name ?? "reloading"}'. 
-                        Number of retries remaining {remainingRetryCount}.
-                        Total retries configured {busOptions.ListenRetryCount}.
-                        Message {message}");
+                        "Listener: {ListenerName} | Message Type: {MessageType} | Failed to process message. Retries remaining: {RemainingRetries}/{TotalRetries} | Message: {Message}",
+                        listenerDefinition?.ServiceType.Name ?? "reloading",
+                        listenerDefinition?.MessageTypeName ?? message,
+                        remainingRetryCount,
+                        busOptions.ListenRetryCount,
+                        message);
                 }
                 else
                 {
                     model.BasicAck(ea.DeliveryTag, false);
                     logger.LogError(ex,
-                        @$"Failed to process message '{listenerDefinition?.MessageTypeName} ?? ?? message', in 
-                        '{listenerDefinition?.ServiceType.Name ?? "reloading"}'. 
-                           Message {message}, Total retries {busOptions.ListenRetryCount}");
+                        "Listener: {ListenerName} | Message Type: {MessageType} | Failed to process message after all retries exhausted. Total retries: {TotalRetries} | Message: {Message}",
+                        listenerDefinition?.ServiceType.Name ?? "reloading",
+                        listenerDefinition?.MessageTypeName ?? message,
+                        busOptions.ListenRetryCount,
+                        message);
 
                     await PublishBad(model, ea.Body, ea.BasicProperties,busOptions.NodeDeadLetterExchange, busOptions.NodeBadRoutingKey, ex);
-                    await RunOnFail(svc, failMethod, ex, message);
+                    await RunOnFail(svc, failMethod, ex, message, logger);
                 }
             }
         }
 
-        private async Task RunOnFail(object svc, MethodInfo failMethod, Exception ex, string message)
+        private async Task RunOnFail(object svc, MethodInfo failMethod, Exception ex, string message, ILogger logger = null)
         {
             if (svc == null || failMethod == null)
                 return;
@@ -174,7 +209,10 @@ namespace SW.Bus
             }
             catch (Exception e)
             {
-                logger.LogError(ex, $"Failed to run OnFail message, Message {message}");
+                if (logger != null)
+                {
+                    logger.LogError(e, "Failed to run OnFail method. Original exception: {OriginalException} | Message: {Message}", ex, message);
+                }
             }
         }
 
