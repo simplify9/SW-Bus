@@ -5,7 +5,7 @@ using SW.Bus.RabbitMqExtensions;
 
 namespace SW.Bus
 {
-    internal class Publisher : IRabbitMqPublish
+    internal class Publisher : IPublish
     {
         private readonly BasicPublisher basicPublisher;
         private readonly string exchange;
@@ -20,14 +20,5 @@ namespace SW.Bus
             basicPublisher.Publish(messageTypeName, message, exchange);
         public Task Publish(string messageTypeName, byte[] message) =>
             basicPublisher.Publish(messageTypeName, message, exchange);
-
-        public Task Publish<TMessage>(TMessage message, byte priority) =>
-            basicPublisher.Publish(message, exchange, priority);
-
-        public Task Publish(string messageTypeName, string message, byte priority) =>
-            basicPublisher.Publish(messageTypeName, message, exchange, priority);
-
-        public Task Publish(string messageTypeName, byte[] message, byte priority) =>
-            basicPublisher.Publish(messageTypeName, message, exchange, priority);
     }
 }
