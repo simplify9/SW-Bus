@@ -34,7 +34,7 @@ jobs:
       - name: Pack and Push NuGet Package
         uses: simplify9/sw-workflows/actions/dotnet-pack-push@main
         with:
-          projects: "SW.Bus/SW.Bus.csproj"
+          projects: "SW.Bus/SW.Bus.csproj,SW.Bus.RabbitMqExtensions/SW.Bus.RabbitMqExtensions.csproj"
           configuration: "Release"
           version: ${{ steps.semver.outputs.version }}
           api-key: ${{ secrets.SWNUGETKEY }}

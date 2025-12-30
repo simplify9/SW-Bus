@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using RabbitMQ.Client;
 using SW.HttpExtensions;
 using SW.PrimitiveTypes;
+using SW.Bus.RabbitMqExtensions;
 using System;
 using System.Linq;
 using System.Reflection;
@@ -107,6 +108,10 @@ namespace SW.Bus
                 .FromAssemblies(assemblies)
                 .AddClasses(classes => classes.AssignableTo<IConsume>())
                 .As<IConsume>().AsSelf().WithScopedLifetime())
+            .Scan(scan => scan
+                .FromAssemblies(assemblies)
+                .AddClasses(classes => classes.AssignableTo<IConsumeExtended>())
+                .As<IConsumeExtended>().AsSelf().WithScopedLifetime())
             .Scan(scan => scan
                 .FromAssemblies(assemblies)
                 .AddClasses(classes => classes.AssignableTo(typeof(IConsume<>)))
