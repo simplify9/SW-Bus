@@ -4,5 +4,5 @@ namespace SW.Bus.RabbitMqExtensions;
 
 public interface IConsumeExtended : IConsume
 {
-    Task<IDictionary<string,QueueOptions>> GetQueOptions();
+    Task<IDictionary<string,ConsumerOptions>> GetMessageTypeNamesWithOptions();
 }
