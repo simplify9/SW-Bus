@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <PackageId>SimplyWorks.Bus.RabbitMqExtensions</PackageId>
+        <Product>SimplyWorks.Bus.RabbitMqExtensions</Product>
+        <Authors>Simplify9</Authors>
+        <Description>Extensions for SimplyWorks.Bus library to support RabbitMQ specific features.</Description>
+        <PackageTags>messagebus;rabbitmq;aspnetcore;messaging;pubsub;eventdriven;microservices;dotnet8</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/simplify9/SW-Bus</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/simplify9/SW-Bus</RepositoryUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+        <RepositoryType>git</RepositoryType>
+        <Copyright>Copyright © 2020 Simplify9</Copyright>
+        <PackageReleaseNotes>See https://github.com/simplify9/SW-Bus/releases for release notes and changelog.</PackageReleaseNotes>
+        
+    </PropertyGroup>
+
+    <ItemGroup>
+      <PackageReference Include="SimplyWorks.PrimitiveTypes" Version="8.1.2" />
+    </ItemGroup>
+
+</Project>

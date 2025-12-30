@@ -25,14 +25,14 @@
     <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
     <PackageReference Include="Scrutor" Version="4.2.2" />
     <PackageReference Include="SimplyWorks.HttpExtensions" Version="5.0.0" />
-    <PackageReference Include="SimplyWorks.PrimitiveTypes" Version="6.0.5" />
+    
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\README.md">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
+    <ProjectReference Include="..\SW.Bus.RabbitMqExtensions\SW.Bus.RabbitMqExtensions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="..\icon.png">
       <Pack>True</Pack>
       <PackagePath></PackagePath>

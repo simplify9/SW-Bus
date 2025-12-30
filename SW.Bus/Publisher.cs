@@ -1,11 +1,7 @@
-﻿
-using RabbitMQ.Client;
-using SW.HttpExtensions;
+﻿using RabbitMQ.Client;
 using SW.PrimitiveTypes;
-using System.Collections.Generic;
-using System.Security.Claims;
-using System.Text;
 using System.Threading.Tasks;
+using SW.Bus.RabbitMqExtensions;
 
 namespace SW.Bus
 {
@@ -24,6 +20,5 @@ namespace SW.Bus
             basicPublisher.Publish(messageTypeName, message, exchange);
         public Task Publish(string messageTypeName, byte[] message) =>
             basicPublisher.Publish(messageTypeName, message, exchange);
-
     }
 }

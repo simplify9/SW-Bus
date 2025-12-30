@@ -1,6 +1,7 @@
 ﻿using SW.HttpExtensions;
 using System;
 using System.Collections.Generic;
+using SW.Bus.RabbitMqExtensions;
 
 namespace SW.Bus
 {
@@ -34,6 +35,7 @@ namespace SW.Bus
         public ushort DefaultQueuePrefetch { get; set; }
         public ushort DefaultRetryCount { get; set; }
         public uint DefaultRetryAfter { get; set; }
+        public int DefaultMaxPriority { get; set; }
         public string NodeId { get; set; }
         public int ListenRetryCount { get; set; }
         public ushort ListenRetryAfter { get; set; }
