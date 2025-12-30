@@ -1,15 +1,11 @@
-﻿
-using RabbitMQ.Client;
-using SW.HttpExtensions;
+﻿using RabbitMQ.Client;
 using SW.PrimitiveTypes;
-using System.Collections.Generic;
-using System.Security.Claims;
-using System.Text;
 using System.Threading.Tasks;
+using SW.Bus.RabbitMqExtensions;
 
 namespace SW.Bus
 {
-    internal class Publisher : IPublish
+    internal class Publisher : IRabbitMqPublish
     {
         private readonly BasicPublisher basicPublisher;
         private readonly string exchange;
@@ -25,5 +21,13 @@ namespace SW.Bus
         public Task Publish(string messageTypeName, byte[] message) =>
             basicPublisher.Publish(messageTypeName, message, exchange);
 
+        public Task Publish<TMessage>(TMessage message, byte priority) =>
+            basicPublisher.Publish(message, exchange, priority);
+
+        public Task Publish(string messageTypeName, string message, byte priority) =>
+            basicPublisher.Publish(messageTypeName, message, exchange, priority);
+
+        public Task Publish(string messageTypeName, byte[] message, byte priority) =>
+            basicPublisher.Publish(messageTypeName, message, exchange, priority);
     }
 }

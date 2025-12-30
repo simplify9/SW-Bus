@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -18,6 +19,7 @@ namespace SW.Bus
         private readonly ConsumerDiscovery consumerDiscovery;
         private readonly ConnectionFactory connectionFactory;
         private readonly IDictionary<string,IModel> openModels;
+        private readonly ConcurrentDictionary<string, IModel> drainingModels = new ConcurrentDictionary<string, IModel>();
         private readonly ConsumerRunner consumerRunner;
 
         private IConnection conn;
@@ -38,6 +40,7 @@ namespace SW.Bus
         public  Task StartAsync(CancellationToken cancellationToken)
         {
             Task.Run(() => StartBusAsync(cancellationToken), cancellationToken);
+            Task.Run(() => DrainingLoop(cancellationToken), cancellationToken);
             return Task.CompletedTask;
 
         }
@@ -77,6 +80,8 @@ namespace SW.Bus
         private void DeclareAndBind(IModel model, ConsumerDefinition c)
         {
             logger.LogInformation($"Declaring and binding: {c.QueueName}.");
+
+            CheckAndMigrateLegacyQueue(c);
 
             // process queue 
             model.QueueDeclare(c.QueueName, true, false, false, c.ProcessArgs);
@@ -209,9 +214,147 @@ namespace SW.Bus
             }
         }
 
+        private void CheckAndMigrateLegacyQueue(ConsumerDefinition c)
+        {
+            var potentialLegacyQueues = new List<string>();
+            potentialLegacyQueues.Add(c.LegacyQueueName);
+            for (int i = 1; i <= 10; i++)
+            {
+                potentialLegacyQueues.Add($"{c.LegacyQueueName}.p{i}");
+            }
+            if (busOptions.DefaultMaxPriority > 10)
+            {
+                potentialLegacyQueues.Add($"{c.LegacyQueueName}.p{busOptions.DefaultMaxPriority}");
+            }
 
+            foreach (var legacyQueueName in potentialLegacyQueues)
+            {
+                if (legacyQueueName == c.QueueName) continue;
+                if (drainingModels.ContainsKey(legacyQueueName)) continue;
 
-        public async Task StopAsync(CancellationToken cancellationToken)
+                try 
+                {
+                    using (var tempModel = conn.CreateModel())
+                    {
+                        tempModel.QueueDeclarePassive(legacyQueueName);
+                    }
+                    
+                    logger.LogInformation($"Legacy queue found: {legacyQueueName}. Starting migration.");
+                    
+                    using (var tempModel = conn.CreateModel())
+                    {
+                        tempModel.QueueUnbind(legacyQueueName, busOptions.ProcessExchange, c.RoutingKey, null);
+                        tempModel.QueueUnbind(legacyQueueName, busOptions.ProcessExchange, c.RetryRoutingKey, null);
+                    }
+
+                    if (openModels.ContainsKey(legacyQueueName))
+                    {
+                        var model = openModels[legacyQueueName];
+                        openModels.Remove(legacyQueueName);
+                        drainingModels.TryAdd(legacyQueueName, model);
+                        logger.LogInformation($"Moved active consumer on {legacyQueueName} to draining mode.");
+                    }
+                    else
+                    {
+                        StartDraining(legacyQueueName, c);
+                    }
+                }
+                catch (RabbitMQ.Client.Exceptions.OperationInterruptedException ex)
+                {
+                    if (ex.ShutdownReason.ReplyCode != 404)
+                    {
+                        logger.LogError(ex, $"Error checking legacy queue {legacyQueueName}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, $"Error checking legacy queue {legacyQueueName}");
+                }
+            }
+        }
+
+        private void StartDraining(string queueName, ConsumerDefinition c)
+        {
+            var model = conn.CreateModel();
+            if (drainingModels.TryAdd(queueName, model))
+            {
+                var consumer = new AsyncEventingBasicConsumer(model);
+                consumer.Received += async (ch, ea) =>
+                {
+                    await consumerRunner.Run(ea, c, model);
+                };
+                
+                var args = new Dictionary<string, object> { { "x-priority", 1 } };
+                model.BasicConsume(queueName, false, "", args, consumer);
+                
+                logger.LogInformation($"Started draining legacy queue: {queueName}");
+            }
+            else
+            {
+                model.Dispose();
+            }
+        }
+
+        private async Task DrainingLoop(CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(1), cancellationToken);
+                    
+                    if (drainingModels.IsEmpty || conn == null || !conn.IsOpen) continue;
+
+                    using (var model = conn.CreateModel())
+                    {
+                        var queuesToRemove = new List<string>();
+                        foreach (var queueName in drainingModels.Keys)
+                        {
+                            try 
+                            {
+                                var result = model.QueueDeclarePassive(queueName);
+                                if (result.MessageCount == 0)
+                                {
+                                    model.QueueDelete(queueName);
+                                    queuesToRemove.Add(queueName);
+                                    logger.LogInformation($"Legacy queue {queueName} is empty and has been deleted.");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                logger.LogWarning(ex, $"Error checking draining queue {queueName}");
+                                if (ex is RabbitMQ.Client.Exceptions.OperationInterruptedException oex && oex.ShutdownReason.ReplyCode == 404)
+                                {
+                                    queuesToRemove.Add(queueName);
+                                }
+                            }
+                        }
+                        
+                        foreach(var q in queuesToRemove)
+                        {
+                            if (drainingModels.TryRemove(q, out var drainingModel))
+                            {
+                                try
+                                {
+                                    drainingModel.Close();
+                                    drainingModel.Dispose();
+                                }
+                                catch
+                                {
+                                    // ignored
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                     logger.LogError(ex, "Error in DrainingLoop");
+                }
+            }
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken)
         {
             
             foreach (var model in openModels.Values)
@@ -226,9 +369,22 @@ namespace SW.Bus
                     logger.LogWarning(ex, $"Failed to stop model.");
                 }
 
+            foreach (var model in drainingModels.Values)
+            {
+                try
+                {
+                    model.Dispose();
+                }
+                catch
+                {
+                    // ignored
+                }
+            }
+
             nodeModel?.Dispose();
             conn?.Close();
             conn?.Dispose();
+            return Task.CompletedTask;
         }
     }
 }

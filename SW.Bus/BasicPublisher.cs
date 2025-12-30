@@ -24,7 +24,7 @@ internal class BasicPublisher
         this.requestContext = requestContext;
     }
 
-    async public Task Publish<TMessage>(TMessage message, string exchange)
+    async public Task Publish<TMessage>(TMessage message, string exchange, byte? priority = null)
     {
         var serializerOptions = new JsonSerializerOptions()
         {
@@ -32,15 +32,15 @@ internal class BasicPublisher
         };
         var body = JsonSerializer.Serialize(message,message.GetType(), serializerOptions);
         
-        await Publish(message.GetType().Name, body,exchange);
+        await Publish(message.GetType().Name, body,exchange, priority);
     }
 
-    public async Task Publish(string messageTypeName, string message,string exchange)
+    public async Task Publish(string messageTypeName, string message,string exchange, byte? priority = null)
     {
         try
         {
             var body = Encoding.UTF8.GetBytes(message);
-            await Publish(messageTypeName, body,exchange);
+            await Publish(messageTypeName, body,exchange, priority);
         }
         catch (Exception e)
         {
@@ -49,11 +49,15 @@ internal class BasicPublisher
 
     }
 
-    public Task Publish(string messageTypeName, byte[] message,string exchange)
+    public Task Publish(string messageTypeName, byte[] message,string exchange, byte? priority = null)
     {
         IBasicProperties props = null;
         props = model.CreateBasicProperties();
         props.Headers = new Dictionary<string, object>();
+        if (priority.HasValue)
+        {
+            props.Priority = priority.Value;
+        }
         if (requestContext.IsValid && busOptions.Token.IsValid)
         {
             var jwt = busOptions.Token.WriteJwt((ClaimsIdentity)requestContext.User.Identity);

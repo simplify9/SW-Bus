@@ -1,6 +1,7 @@
 ﻿using SW.HttpExtensions;
 using System;
 using System.Collections.Generic;
+using SW.Bus.RabbitMqExtensions;
 
 namespace SW.Bus
 {
@@ -34,6 +35,7 @@ namespace SW.Bus
         public ushort DefaultQueuePrefetch { get; set; }
         public ushort DefaultRetryCount { get; set; }
         public uint DefaultRetryAfter { get; set; }
+        public int DefaultMaxPriority { get; set; }
         public string NodeId { get; set; }
         public int ListenRetryCount { get; set; }
         public ushort ListenRetryAfter { get; set; }
@@ -66,14 +68,15 @@ namespace SW.Bus
         public string NodeDeadLetterExchange =>
             $"{versionPrefix}{environment}{(string.IsNullOrWhiteSpace(ApplicationName) ? "" : $".{ApplicationName}")}.node.deadletter".ToLower();
 
-        public void AddQueueOption(string queueName, ushort? prefetch = null, int? retryCount = null, uint? retryAfterSeconds = null,int? priority = null)
+        public void AddQueueOption(string queueName, ushort? prefetch = null, int? retryCount = null, uint? retryAfterSeconds = null,int? priority = null, int? maxPriority = null)
         {
             Options[queueName.ToLower()] = new QueueOptions
             {
                 Prefetch = prefetch,
                 RetryCount = retryCount,
                 RetryAfterSeconds = retryAfterSeconds,
-                Priority = priority
+                Priority = priority,
+                MaxPriority = maxPriority
             };
         }
 

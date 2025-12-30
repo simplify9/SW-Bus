@@ -172,7 +172,7 @@ namespace SW.Bus
             {
                 await (Task)failMethod.Invoke(svc, new Object[] { ex });
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 logger.LogError(ex, $"Failed to run OnFail message, Message {message}");
             }
