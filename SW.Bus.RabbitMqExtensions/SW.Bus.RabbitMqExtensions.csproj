@@ -19,7 +19,9 @@
         <PackageReleaseNotes>See https://github.com/simplify9/SW-Bus/releases for release notes and changelog.</PackageReleaseNotes>
         
     </PropertyGroup>
-
+    <ItemGroup>
+        <None Include="..\README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
     <ItemGroup>
       <PackageReference Include="SimplyWorks.PrimitiveTypes" Version="8.1.2" />
     </ItemGroup>
