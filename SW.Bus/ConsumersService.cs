@@ -3,25 +3,29 @@ using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace SW.Bus;
-
 internal class ConsumersService : IHostedService
 {
     private readonly ILogger<ConsumersService> logger;
     private readonly BusOptions busOptions;
     private readonly ConsumerDiscovery consumerDiscovery;
     private readonly ConnectionFactory connectionFactory;
-    private readonly IDictionary<string, (IModel model, ConsumerDefinition consumerDefinition)> openModels;
+    
+    // Thread-safe dictionary for runtime updates
+    private readonly ConcurrentDictionary<string, (IModel model, ConsumerDefinition consumerDefinition)> openModels;
     private readonly ConsumerRunner consumerRunner;
 
     private IConnection conn;
     private IModel nodeModel;
-    private ICollection<ConsumerDefinition> consumerDefinitions;
+    
+    // Semaphore to prevent overlapping refresh operations
+    private readonly SemaphoreSlim _topologyLock = new(1, 1);
 
     public ConsumersService(ILogger<ConsumersService> logger, BusOptions busOptions,
         ConsumerDiscovery consumerDiscovery, ConnectionFactory connectionFactory, ConsumerRunner consumerRunner)
@@ -32,39 +36,74 @@ internal class ConsumersService : IHostedService
         this.connectionFactory = connectionFactory;
         this.consumerRunner = consumerRunner;
 
-        openModels = new Dictionary<string, (IModel, ConsumerDefinition)>();
+        openModels = new ConcurrentDictionary<string, (IModel, ConsumerDefinition)>();
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        // Offload to background thread to not block Host startup
         Task.Run(() => StartBusAsync(cancellationToken), cancellationToken);
         return Task.CompletedTask;
     }
 
     private async Task StartBusAsync(CancellationToken cancellationToken)
     {
-        try
+        var retryCount = 0;
+        while (!cancellationToken.IsCancellationRequested)
         {
-            consumerDefinitions = await consumerDiscovery.Load();
-
-            conn = connectionFactory.CreateConnection();
-            conn.ConnectionShutdown += ConnectionShutdown;
-            DeclareAndBindListener();
-
-            using (var model = conn.CreateModel())
+            try
             {
-                foreach (var c in consumerDefinitions)
-                    DeclareAndBind(model, c);
-            }
+                await _topologyLock.WaitAsync(cancellationToken);
+                try
+                {
+                    var consumerDefinitions = await consumerDiscovery.Load();
 
-            foreach (var consumerDefinition in consumerDefinitions)
-            {
-                AttachConsumer(consumerDefinition);
+                    // 1. Establish Connection
+                    if (conn is not { IsOpen: true })
+                    {
+                        conn = connectionFactory.CreateConnection();
+                        conn.ConnectionShutdown += ConnectionShutdown;
+                    }
+
+                    // 2. Setup Node Listener (Control Channel)
+                    DeclareAndBindListener();
+
+                    // 3. Declare Queues (using a temporary channel to keep consumer channels clean)
+                    using (var model = conn.CreateModel())
+                    {
+                        foreach (var c in consumerDefinitions)
+                            DeclareAndBind(model, c);
+                    }
+
+                    // 4. Attach Consumers
+                    foreach (var consumerDefinition in consumerDefinitions)
+                    {
+                        AttachConsumer(consumerDefinition);
+                    }
+                    
+                    logger.LogInformation("ConsumersService started successfully.");
+                    break; // Exit retry loop on success
+                }
+                finally
+                {
+                    _topologyLock.Release();
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, $"Starting {nameof(ConsumersService)}");
+            catch (Exception ex)
+            {
+                retryCount++;
+                var delay = Math.Min(retryCount * 2, 30); // Cap delay at 30s
+                logger.LogError(ex, $"Failed to start {nameof(ConsumersService)}. Retrying in {delay}s...");
+                
+                try 
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(delay), cancellationToken);
+                }
+                catch (TaskCanceledException) 
+                { 
+                    break; 
+                }
+            }
         }
     }
 
@@ -72,22 +111,22 @@ internal class ConsumersService : IHostedService
     {
         logger.LogInformation($"Declaring and binding: {c.QueueName}.");
 
-        // process queue 
         model.QueueDeclare(c.QueueName, true, false, false, c.ProcessArgs);
         model.QueueBind(c.QueueName, busOptions.ProcessExchange, c.RoutingKey, null);
         model.QueueBind(c.QueueName, busOptions.ProcessExchange, c.RetryRoutingKey, null);
-        //model.QueueUnbind();
-        // wait queue
 
         model.QueueDeclare(c.RetryQueueName, true, false, false, c.RetryArgs);
         model.QueueBind(c.RetryQueueName, busOptions.DeadLetterExchange, c.RetryRoutingKey, null);
-        // bad queue
+
         model.QueueDeclare(c.BadQueueName, true, false, false, ConsumerDefinition.BadArgs);
         model.QueueBind(c.BadQueueName, busOptions.DeadLetterExchange, c.BadRoutingKey, null);
     }
 
     private void DeclareAndBindListener()
     {
+        // Ensure we don't double-bind if this is a reconnect
+        if (nodeModel != null && nodeModel.IsOpen) return;
+
         logger.LogInformation($"Declaring and binding node queue: {busOptions.NodeQueueName}.");
         var listeners = consumerDiscovery.LoadListeners();
 
@@ -99,154 +138,188 @@ internal class ConsumersService : IHostedService
 
         if (repeated.Any())
             throw new BusException(
-                "One node consumer is allowed for each message type. the following message(s) has more than one node consumer defined" +
-                $" {string.Join(',', repeated.Select(r => r.MessageType.FullName))}");
+                $"Duplicate node consumers defined for: {string.Join(',', repeated.Select(r => r.MessageType.FullName))}");
 
         nodeModel = conn.CreateModel();
-        // process queue 
+        
         nodeModel.QueueDeclare(busOptions.NodeQueueName, true, true, true, busOptions.NodeProcessArgs);
         nodeModel.QueueBind(busOptions.NodeQueueName, busOptions.NodeExchange, busOptions.NodeRoutingKey, null);
         nodeModel.QueueBind(busOptions.NodeQueueName, busOptions.NodeExchange, busOptions.NodeRetryRoutingKey, null);
-        // wait queue
+        
         nodeModel.QueueDeclare(busOptions.NodeRetryQueueName, true, true, true, busOptions.NodeRetryArgs);
-        nodeModel.QueueBind(busOptions.NodeRetryQueueName, busOptions.NodeDeadLetterExchange,
-            busOptions.NodeRetryRoutingKey, null);
-        // bad queue
+        nodeModel.QueueBind(busOptions.NodeRetryQueueName, busOptions.NodeDeadLetterExchange, busOptions.NodeRetryRoutingKey, null);
+        
         nodeModel.QueueDeclare(busOptions.NodeBadQueueName, true, false, false, ConsumerDefinition.BadArgs);
-        nodeModel.QueueBind(busOptions.NodeBadQueueName, busOptions.NodeDeadLetterExchange,
-            busOptions.NodeBadRoutingKey, null);
+        nodeModel.QueueBind(busOptions.NodeBadQueueName, busOptions.NodeDeadLetterExchange, busOptions.NodeBadRoutingKey, null);
 
         var consumer = new AsyncEventingBasicConsumer(nodeModel);
-        consumer.Shutdown += (ch, args) =>
-        {
-            try
-            {
-                logger.LogWarning($"Node Consumer RabbitMq connection shutdown. {args}");
-            }
-            catch (Exception)
-            {
-                // ignored
-            }
-
-            return Task.CompletedTask;
-        };
         consumer.Received += async (ch, ea) =>
         {
+            // Pass the RefreshConsumers method as the callback
             await consumerRunner.RunNodeMessage(ea, nodeModel, listeners, RefreshConsumers);
         };
 
         nodeModel.BasicQos(0, 1, false);
-
         nodeModel.BasicConsume(busOptions.NodeQueueName, false, consumer);
     }
 
     private void AttachConsumer(ConsumerDefinition consumerDefinition)
     {
-        var model = conn.CreateModel();
-        openModels.Add(consumerDefinition.QueueName, (model, consumerDefinition));
+        if (openModels.ContainsKey(consumerDefinition.QueueName)) return;
 
+        var model = conn.CreateModel();
+        
         var consumer = new AsyncEventingBasicConsumer(model);
         consumerDefinition.ConsumerObject = consumer;
+        
         consumer.Shutdown += (ch, args) =>
         {
-            try
-            {
-                logger.LogWarning($"Consumer RabbitMq connection shutdown. {args}");
-            }
-            catch (Exception)
-            {
-                // ignored
-            }
-
+            logger.LogWarning($"Consumer {consumerDefinition.QueueName} shutdown. {args}");
             return Task.CompletedTask;
         };
-        consumer.Received += async (ch, ea) => { await consumerRunner.Run(ea, consumerDefinition, model); };
+        
+        consumer.Received += async (ch, ea) => 
+        { 
+            await consumerRunner.Run(ea, consumerDefinition, model); 
+        };
 
         model.BasicQos(0, consumerDefinition.QueuePrefetch, false);
 
         consumerDefinition.ConsumerTag = model.BasicConsume(consumerDefinition.QueueName, false, "",
             consumerDefinition.ConsumerArgs, consumer);
+
+        openModels.TryAdd(consumerDefinition.QueueName, (model, consumerDefinition));
     }
 
     private async Task RefreshConsumers()
     {
+        // Lock to ensure we don't process multiple refresh requests simultaneously
+        await _topologyLock.WaitAsync();
         try
         {
-            consumerDefinitions = await consumerDiscovery.Load(true);
+            logger.LogInformation("Refreshing consumers...");
+            var newDefinitions = await consumerDiscovery.Load(true);
+            
+            // 1. Declare any NEW queues
             using (var model = conn.CreateModel())
             {
-                foreach (var c in consumerDefinitions)
+                foreach (var c in newDefinitions)
                 {
-                    if (openModels.ContainsKey(c.QueueName))
-                        continue;
+                    if (openModels.ContainsKey(c.QueueName)) continue;
                     DeclareAndBind(model, c);
                 }
             }
 
-            foreach (var consumerDefinition in consumerDefinitions)
+            // 2. Update existing or Attach new
+            foreach (var def in newDefinitions)
             {
-                var existing = openModels[consumerDefinition.QueueName];
-                var model = existing.model;
-                if (model != null &&
-                    (existing.consumerDefinition.QueuePrefetch == consumerDefinition.QueuePrefetch
-                     && existing.consumerDefinition.ConsumerPriority == consumerDefinition.ConsumerPriority))
-                    continue;
-                if (existing.model != null)
+                // CASE A: Existing Consumer
+                if (openModels.TryGetValue(def.QueueName, out var existing))
                 {
-                    if (existing.consumerDefinition.ConsumerPriority != consumerDefinition.ConsumerPriority)
-                    {
-                        existing.model.BasicCancel(existing.consumerDefinition.ConsumerTag);
-                        existing.consumerDefinition.ConsumerTag = model.BasicConsume(consumerDefinition.QueueName,
-                            false, "", consumerDefinition.ConsumerArgs, consumerDefinition.ConsumerObject);
-                        
-                    }
+                    var existingModel = existing.model;
+                    var existingDef = existing.consumerDefinition;
 
-                    if (existing.consumerDefinition.QueuePrefetch != consumerDefinition.QueuePrefetch)
-                    {
-                        existing.model.BasicQos(0, consumerDefinition.QueuePrefetch, false);
-                    }
+                    var argsChanged = !DictionariesEqual(existingDef.ConsumerArgs, def.ConsumerArgs);
+                    var priorityChanged = existingDef.ConsumerPriority != def.ConsumerPriority;
 
-                    continue;
+                    if (priorityChanged || argsChanged)
+                    {
+                        logger.LogInformation($"Configuration changed for {def.QueueName}. Restarting consumer.");
+                        try
+                        {
+                            existingModel.BasicCancel(existingDef.ConsumerTag);
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogWarning(ex, $"Failed to cancel consumer {def.QueueName}");
+                        }
+
+                        // Update properties (including Args) BEFORE re-consuming
+                        existingDef.UpdateConsumerProps(def);
+
+                        existingDef.ConsumerTag = existingModel.BasicConsume(def.QueueName,
+                            false, "", existingDef.ConsumerArgs, existingDef.ConsumerObject);
+                    }
+                    else 
+                    {
+                        if (existingDef.QueuePrefetch != def.QueuePrefetch)
+                        {
+                            logger.LogInformation($"Prefetch changed for {def.QueueName} to {def.QueuePrefetch}.");
+                            existingModel.BasicQos(0, def.QueuePrefetch, false);
+                        }
+                        existingDef.UpdateConsumerProps(def);
+                    }
                 }
-
-                AttachConsumer(consumerDefinition);
+                // CASE B: New Consumer
+                else
+                {
+                    logger.LogInformation($"Attaching new consumer: {def.QueueName}");
+                    AttachConsumer(def);
+                }
             }
+            
+            // Optional: Logic to remove consumers that are no longer in newDefinitions could go here
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, $"Starting {nameof(ConsumersService)}");
+            logger.LogError(ex, $"Error refreshing consumers.");
         }
+        finally
+        {
+            _topologyLock.Release();
+        }
+    }
+
+    private bool DictionariesEqual(IDictionary<string, object> a, IDictionary<string, object> b)
+    {
+        if (a == b) return true;
+        if (a == null || b == null) return false;
+        if (a.Count != b.Count) return false;
+
+        foreach (var kvp in a)
+        {
+            if (!b.TryGetValue(kvp.Key, out var value)) return false;
+            if (!Equals(kvp.Value, value)) return false;
+        }
+        return true;
     }
 
     private void ConnectionShutdown(object connection, ShutdownEventArgs args)
     {
-        try
-        {
-            logger.LogWarning($"Consumer RabbitMq connection shutdown. {args.Cause}");
-        }
-        catch (Exception)
-        {
-            // ignored
-        }
+        logger.LogWarning($"Consumer RabbitMq connection shutdown. {args.Cause}");
+        // Note: RabbitMQ Client usually handles auto-recovery for connection, 
+        // but we might need to re-declare topology if AutomaticRecoveryEnabled is false.
     }
-
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        foreach (var (model, _) in openModels.Values)
-
-            try
+        await _topologyLock.WaitAsync(cancellationToken);
+        try
+        {
+            foreach (var (model, _) in openModels.Values)
             {
-                //model.Close();
-                model.Dispose();
+                try
+                {
+                    if (model.IsOpen) model.Close();
+                    model.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to stop model.");
+                }
             }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, $"Failed to stop model.");
-            }
+            openModels.Clear();
 
-        nodeModel?.Dispose();
-        conn?.Close();
-        conn?.Dispose();
+            nodeModel?.Dispose();
+            if (conn != null)
+            {
+                if (conn.IsOpen) conn.Close();
+                conn.Dispose();
+            }
+        }
+        finally
+        {
+            _topologyLock.Release();
+        }
     }
 }

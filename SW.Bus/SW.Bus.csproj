@@ -24,6 +24,7 @@
         <None Include="..\README.md" Pack="true" PackagePath="\" />
     </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="EasyNetQ.Management.Client" Version="3.0.1" />
     <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
     <PackageReference Include="Scrutor" Version="4.2.2" />
     <PackageReference Include="SimplyWorks.HttpExtensions" Version="5.0.0" />
