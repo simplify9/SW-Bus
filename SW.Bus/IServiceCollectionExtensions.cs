@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Configuration;
+﻿﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using RabbitMQ.Client;
@@ -45,6 +45,26 @@ namespace SW.Bus
                 ClientProvidedName = $"{Assembly.GetCallingAssembly().GetName().Name} Exchange Declarer"
             };
 
+            if (string.IsNullOrEmpty(busOptions.ManagementUrl))
+            {
+                busOptions.ManagementUrl = $"http://{factory.HostName}:15672";
+            }
+            if (string.IsNullOrEmpty(busOptions.ManagementUsername))
+            {
+                busOptions.ManagementUsername = factory.UserName;
+            }
+            if (string.IsNullOrEmpty(busOptions.ManagementPassword))
+            {
+                busOptions.ManagementPassword = factory.Password;
+            }
+            if (string.IsNullOrEmpty(busOptions.VirtualHost))
+            {
+                busOptions.VirtualHost = factory.VirtualHost;
+            }
+
+            services.AddSingleton<IConsumerReader, ConsumerReader>();
+            services.AddSingleton<ConsumerDiscovery>();
+            services.AddMemoryCache();
 
             using var conn = factory.CreateConnection();
             using var model = conn.CreateModel();
@@ -159,7 +179,6 @@ namespace SW.Bus
             });
 
             services.AddHostedService<ConsumersService>();
-            services.AddSingleton<ConsumerDiscovery>();
             services.AddSingleton<ConsumerRunner>();
             return services;
         }

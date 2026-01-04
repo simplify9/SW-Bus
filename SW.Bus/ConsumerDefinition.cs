@@ -10,7 +10,7 @@ public class ConsumerDefinition
 {
     private readonly string queueNamePrefix;
     private readonly BusOptions busOptions;
-    private readonly QueueOptions queueOptions;
+    private QueueOptions queueOptions;
 
     public ConsumerDefinition(string queueNamePrefix, BusOptions busOptions, string nakedQueueName)
     {
@@ -70,4 +70,8 @@ public class ConsumerDefinition
     public int? ConsumerPriority => queueOptions?.Priority;
     public string ConsumerTag { get; set; }
     public AsyncEventingBasicConsumer ConsumerObject { get; set; }
+    public void UpdateConsumerProps(ConsumerDefinition other)
+    {
+        this.queueOptions = other.queueOptions;
+    }
 }

@@ -28,6 +28,11 @@ namespace SW.Bus
         }
         public int HeartBeatTimeOut { get; set; }
 
+        public string ManagementUrl { get; set; }
+        public string ManagementUsername { get; set; }
+        public string ManagementPassword { get; set; }
+        public string VirtualHost { get; set; }
+
         internal TimeSpan RequestedHeartbeat =>
             HeartBeatTimeOut > 0 ? TimeSpan.FromSeconds(HeartBeatTimeOut) : TimeSpan.Zero; 
         public JwtTokenParameters Token { get; set; }

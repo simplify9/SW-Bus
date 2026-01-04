@@ -51,17 +51,46 @@ public class ConsumerDiscovery(IServiceProvider sp, BusOptions busOptions)
             return consumerDefinitions;
         var genericConsumers = scope.ServiceProvider.GetServices<IConsumeGenericBase>();
         foreach (var svc in genericConsumers)
-        foreach (var type in svc.GetType().GetTypeInfo().ImplementedInterfaces
-                     .Where(t => t.IsGenericType && t.GetGenericTypeDefinition() == typeof(IConsume<>)))
-
-            consumerDefinitions.Add(new ConsumerDefinition(queueNamePrefix, busOptions,
-                $"{svc.GetType().Name}.{type.GetGenericArguments()[0].Name}".ToLower())
+            foreach (var type in svc.GetType().GetTypeInfo().ImplementedInterfaces
+                         .Where(t => t.IsGenericType && t.GetGenericTypeDefinition() == typeof(IConsume<>)))
             {
-                ServiceType = svc.GetType(),
-                MessageType = type.GetGenericArguments()[0],
-                MessageTypeName = type.GetGenericArguments()[0].Name,
-                Method = type.GetMethod("Process"),
-            });
+                var messageType = type.GetGenericArguments()[0];
+                ConsumerOptions options = null;
+                var extendedInterface = typeof(IConsumeExtended<>).MakeGenericType(messageType);
+
+                if (extendedInterface.IsAssignableFrom(svc.GetType()))
+                {
+                    var method = extendedInterface.GetMethod(nameof(IConsumeExtended<object>.GetConsumerOptions));
+                    if(method == null)
+                        throw new InvalidOperationException(
+                            $"Method {nameof(IConsumeExtended<object>.GetConsumerOptions)} not found in {extendedInterface.Name}");
+                    
+                    options = await ((Task<ConsumerOptions>)method.Invoke(svc, null))!;
+                }
+
+                if (options != null)
+                {
+                    consumerDefinitions.Add(new ConsumerDefinition(queueNamePrefix, busOptions, options,
+                        $"{svc.GetType().Name}.{messageType.Name}".ToLower())
+                    {
+                        ServiceType = svc.GetType(),
+                        MessageType = messageType,
+                        MessageTypeName = messageType.Name,
+                        Method = type.GetMethod("Process"),
+                    });
+                }
+                else
+                {
+                    consumerDefinitions.Add(new ConsumerDefinition(queueNamePrefix, busOptions,
+                        $"{svc.GetType().Name}.{messageType.Name}".ToLower())
+                    {
+                        ServiceType = svc.GetType(),
+                        MessageType = messageType,
+                        MessageTypeName = messageType.Name,
+                        Method = type.GetMethod("Process"),
+                    });
+                }
+            }
 
         return consumerDefinitions;
     }
