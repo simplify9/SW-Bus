@@ -13,6 +13,15 @@ namespace SW.Bus
 {
     public static class IServiceCollectionExtensions
     {
+        /// <summary>
+        /// Configures the message bus infrastructure including exchanges, consumer reader, and HTTP client for RabbitMQ management API.
+        /// This method declares all required exchanges and sets up the consumer discovery and statistics reader.
+        /// </summary>
+        /// <param name="services">The <see cref="IServiceCollection"/> to add services to.</param>
+        /// <param name="configure">Optional action to configure <see cref="BusOptions"/>.</param>
+        /// <param name="environmentName">Optional environment name. If not provided, uses the current environment from <see cref="IHostEnvironment"/>.</param>
+        /// <returns>The <see cref="IServiceCollection"/> for chaining.</returns>
+        /// <exception cref="BusException">Thrown when the RabbitMQ connection string is not configured.</exception>
         public static IServiceCollection AddBus(this IServiceCollection services, Action<BusOptions> configure = null,
             string environmentName = null)
         {
@@ -77,9 +86,32 @@ namespace SW.Bus
             model.Close();
             conn.Close();
 
+            services.AddHttpClient<IConsumerReader, ConsumerReader>((sp, client) =>
+            {
+                var options = sp.GetRequiredService<BusOptions>();
+    
+                // Set the BaseAddress here so it's ready for the ManagementClient
+                client.BaseAddress = new Uri(options.ManagementUrl);
+            });
+            
+            services.AddHttpClient<IErrorQueueReader, ErrorQueueReader>((sp, client) =>
+            {
+                var options = sp.GetRequiredService<BusOptions>();
+    
+                // Set the BaseAddress here so it's ready for the ManagementClient
+                client.BaseAddress = new Uri(options.ManagementUrl);
+            });
+
+            
             return services;
         }
 
+        /// <summary>
+        /// Registers publishing services for sending messages to the message bus.
+        /// Configures the publisher for both direct messaging (<see cref="IPublish"/>) and broadcasting (<see cref="IBroadcast"/>).
+        /// </summary>
+        /// <param name="services">The <see cref="IServiceCollection"/> to add services to.</param>
+        /// <returns>The <see cref="IServiceCollection"/> for chaining.</returns>
         public static IServiceCollection AddBusPublish(this IServiceCollection services)
         {
             var sp = services.BuildServiceProvider();
@@ -108,6 +140,12 @@ namespace SW.Bus
 
         }
 
+        /// <summary>
+        /// Registers a mock publisher for testing purposes.
+        /// The mock publisher does not send messages to RabbitMQ.
+        /// </summary>
+        /// <param name="services">The <see cref="IServiceCollection"/> to add services to.</param>
+        /// <returns>The <see cref="IServiceCollection"/> for chaining.</returns>
         public static IServiceCollection AddBusPublishMock(this IServiceCollection services)
         {
             services.AddScoped<IPublish, MockPublisher>();
@@ -115,11 +153,13 @@ namespace SW.Bus
         }
 
         /// <summary>
-        /// Registers consumers and listeners
+        /// Registers consumers and listeners for processing messages from the message bus.
+        /// Scans the specified assemblies for types implementing <see cref="IConsume"/>, <see cref="IConsumeExtended"/>, 
+        /// <see cref="IConsume{T}"/>, and <see cref="IListen{T}"/> interfaces and registers them with scoped lifetime.
         /// </summary>
-        /// <param name="services"></param>
-        /// <param name="assemblies"></param>
-        /// <returns></returns>
+        /// <param name="services">The <see cref="IServiceCollection"/> to add services to.</param>
+        /// <param name="assemblies">The assemblies to scan for consumers and listeners. If not provided, scans the calling assembly.</param>
+        /// <returns>The <see cref="IServiceCollection"/> for chaining.</returns>
         public static IServiceCollection AddBusConsume(this IServiceCollection services, params Assembly[] assemblies)
         {
             if (assemblies.Length == 0) assemblies = new[] { Assembly.GetCallingAssembly() };
@@ -141,11 +181,12 @@ namespace SW.Bus
         }
 
         /// <summary>
-        /// Registers listeners only
+        /// Registers listeners only for processing broadcast messages from the message bus.
+        /// Scans the specified assemblies for types implementing <see cref="IListen{T}"/> interface and registers them with scoped lifetime.
         /// </summary>
-        /// <param name="services"></param>
-        /// <param name="assemblies"></param>
-        /// <returns></returns>
+        /// <param name="services">The <see cref="IServiceCollection"/> to add services to.</param>
+        /// <param name="assemblies">The assemblies to scan for listeners. If not provided, scans the calling assembly.</param>
+        /// <returns>The <see cref="IServiceCollection"/> for chaining.</returns>
         public static IServiceCollection AddBusListen(this IServiceCollection services, params Assembly[] assemblies)
         {
             if (assemblies.Length == 0) assemblies = new[] { Assembly.GetCallingAssembly() };

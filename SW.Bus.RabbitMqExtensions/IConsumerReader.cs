@@ -38,6 +38,10 @@ public record ConsumerCount(
 public interface IConsumerReader
 {
     /// <summary>
+    /// Gets the timestamp of the last update to the consumer statistics.
+    /// </summary>
+    public Task<DateTime> LastUpdated { get; }
+    /// <summary>
     /// Gets the consumer count and statistics for a specific consumer and message name.
     /// </summary>
     /// <typeparam name="TConsumer">The type of the consumer.</typeparam>
