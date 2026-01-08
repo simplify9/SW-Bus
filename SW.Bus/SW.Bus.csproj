@@ -1,45 +1,47 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <PackageId>SimplyWorks.Bus</PackageId>
-    <Product>SimplyWorks.Bus</Product>
-    <Authors>Simplify9</Authors>
-    <Description>A lightweight .NET 8 message bus library built on RabbitMQ for ASP.NET Core applications. Provides simple publish-subscribe patterns, typed consumers, broadcasting, automatic retries, and JWT integration. Visit GitHub for full documentation and examples.</Description>
-    <PackageTags>messagebus;rabbitmq;aspnetcore;messaging;pubsub;eventdriven;microservices;dotnet8</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/simplify9/SW-Bus</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/simplify9/SW-Bus</RepositoryUrl>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageIcon>icon.png</PackageIcon>
-    <RepositoryType>git</RepositoryType>
-    <Copyright>Copyright © 2020 Simplify9</Copyright>
-    <PackageReleaseNotes>See https://github.com/simplify9/SW-Bus/releases for release notes and changelog.</PackageReleaseNotes>
-  </PropertyGroup>
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <NoWarn>$(NoWarn);1591</NoWarn> <!-- Suppress warnings for missing XML docs -->
+        <PackageId>SimplyWorks.Bus</PackageId>
+        <Product>SimplyWorks.Bus</Product>
+        <Authors>Simplify9</Authors>
+        <Description>A lightweight .NET 8 message bus library built on RabbitMQ for ASP.NET Core applications. Provides simple publish-subscribe patterns, typed consumers, broadcasting, automatic retries, and JWT integration. Visit GitHub for full documentation and examples.</Description>
+        <PackageTags>messagebus;rabbitmq;aspnetcore;messaging;pubsub;eventdriven;microservices;dotnet8</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/simplify9/SW-Bus</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/simplify9/SW-Bus</RepositoryUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+        <RepositoryType>git</RepositoryType>
+        <Copyright>Copyright © 2020 Simplify9</Copyright>
+        <PackageReleaseNotes>See https://github.com/simplify9/SW-Bus/releases for release notes and changelog.</PackageReleaseNotes>
+    </PropertyGroup>
 
-  <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
-  </ItemGroup>
     <ItemGroup>
-        <None Include="..\README.md" Pack="true" PackagePath="\" />
+        <FrameworkReference Include="Microsoft.AspNetCore.App"/>
     </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="EasyNetQ.Management.Client" Version="3.0.1" />
-    <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
-    <PackageReference Include="Scrutor" Version="4.2.2" />
-    <PackageReference Include="SimplyWorks.HttpExtensions" Version="5.0.0" />
-    
-  </ItemGroup>
+    <ItemGroup>
+        <None Include="..\README.md" Pack="true" PackagePath="\"/>
+    </ItemGroup>
+    <ItemGroup>
+        <PackageReference Include="EasyNetQ.Management.Client" Version="3.0.1"/>
+        <PackageReference Include="RabbitMQ.Client" Version="6.8.1"/>
+        <PackageReference Include="Scrutor" Version="4.2.2"/>
+        <PackageReference Include="SimplyWorks.HttpExtensions" Version="5.0.0"/>
 
-  <ItemGroup>
-    <ProjectReference Include="..\SW.Bus.RabbitMqExtensions\SW.Bus.RabbitMqExtensions.csproj" />
-  </ItemGroup>
+    </ItemGroup>
 
-  <ItemGroup>
-    <None Include="..\icon.png">
-      <Pack>True</Pack>
-      <PackagePath></PackagePath>
-    </None>
-  </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\SW.Bus.RabbitMqExtensions\SW.Bus.RabbitMqExtensions.csproj"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="..\icon.png">
+            <Pack>True</Pack>
+            <PackagePath></PackagePath>
+        </None>
+    </ItemGroup>
 
 </Project>
