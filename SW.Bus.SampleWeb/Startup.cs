@@ -64,7 +64,6 @@ namespace SW.Bus.SampleWeb
                     services.AddBusListen();
                     break;
             }
-            services.AddBusListen(); 
             services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).
                 AddCookie(options =>
                 {
