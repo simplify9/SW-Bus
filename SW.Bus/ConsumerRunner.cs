@@ -47,7 +47,7 @@ namespace SW.Bus
             try
             {
                 using var scope = sp.CreateScope();
-                TryBuildBusRequestContext(scope.ServiceProvider, ea.BasicProperties, remainingRetryCount);
+                TryBuildBusRequestContext(scope.ServiceProvider,consumerDefinition.MessageTypeName, ea.BasicProperties, remainingRetryCount);
 
                 var body = ea.Body;
                 message = Encoding.UTF8.GetString(body.ToArray());
@@ -119,12 +119,12 @@ namespace SW.Bus
                 else
                 {
                     consumerMessage = JsonSerializer.Deserialize<BroadcastMessage>(message);
-                    TryBuildBusRequestContext(scope.ServiceProvider, ea.BasicProperties, remainingRetryCount);
-                    
                     listenerDefinition = listeners.SingleOrDefault(d =>
                         d.MessageType == Type.GetType(consumerMessage.MessageTypeName));
+                    
                     if (listenerDefinition != null)
                     {
+                        TryBuildBusRequestContext(scope.ServiceProvider, listenerDefinition.MessageTypeName, ea.BasicProperties, remainingRetryCount);
                         svc = scope.ServiceProvider.GetRequiredService(listenerDefinition.ServiceType);
                         processMethod = listenerDefinition.Method;
                         failMethod = listenerDefinition.FailMethod;
@@ -177,12 +177,13 @@ namespace SW.Bus
                 logger.LogError(ex, $"Failed to run OnFail message, Message {message}");
             }
         }
-
-
-        void TryBuildBusRequestContext(IServiceProvider serviceProvider, IBasicProperties basicProperties,
+        
+        void TryBuildBusRequestContext(IServiceProvider serviceProvider,string messageName, IBasicProperties basicProperties,
             int remainingRetries)
         {
             var remainingRetriesValue = new RequestValue("RemainingRetries", remainingRetries.ToString(),
+                RequestValueType.ServiceBusValue);
+            var messageTypeValue = new RequestValue("MessageTypeName", messageName,
                 RequestValueType.ServiceBusValue);
             
             RequestValue sourceNodeIdValue = null;
@@ -199,6 +200,7 @@ namespace SW.Bus
                 !basicProperties.Headers.TryGetValue(RequestContext.UserHeaderName, out var userHeaderBytes))
             {
                 requestContext?.AddValue(remainingRetriesValue);
+                requestContext?.AddValue(messageTypeValue);
                 if (sourceNodeIdValue != null) requestContext?.AddValue(sourceNodeIdValue);
                 return;
             };
@@ -221,6 +223,7 @@ namespace SW.Bus
             requestContext.Set(user, requestValues, correlationHeader);
         }
 
+        
         private Task PublishBad(IModel model, ReadOnlyMemory<byte> body, IBasicProperties messageProps, 
             string exchange, string routingKey, Exception ex)
         {

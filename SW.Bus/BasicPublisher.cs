@@ -68,6 +68,7 @@ internal class BasicPublisher
             props.Headers.Add(RequestContext.CorrelationIdHeaderName, requestContext.CorrelationId);
 
         props.Headers.Add(BusOptions.SourceNodeIdHeaderName,busOptions.NodeId);
+        props.Headers.Add("Id", Guid.NewGuid().ToString());
 
         model.BasicPublish(exchange, messageTypeName.ToLower(), props, message);
 
