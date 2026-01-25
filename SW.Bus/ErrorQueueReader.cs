@@ -29,7 +29,7 @@ public class ErrorQueueReader : IErrorQueueReader
     public ErrorQueueReader(HttpClient httpClient, BusOptions busOptions, ConsumerDiscovery consumerDiscovery)
     {
         this.consumerDiscovery = consumerDiscovery;
-        managementClient = new ManagementClient(httpClient, busOptions.ManagementUsername, busOptions.ManagementPassword);
+        managementClient = new ManagementClient(new Uri(busOptions.ManagementUrl), busOptions.ManagementUsername, busOptions.ManagementPassword);
         vhost = new Vhost(busOptions.VirtualHost);
     }
 

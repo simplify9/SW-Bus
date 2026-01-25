@@ -49,7 +49,7 @@ public class ConsumerReader : IConsumerReader
 
         // ManagementClient uses the managed HttpClient
         managementClient = new ManagementClient(
-            httpClient, 
+            new Uri(busOptions.ManagementUrl),
             busOptions.ManagementUsername, 
             busOptions.ManagementPassword
         );
