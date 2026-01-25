@@ -231,22 +231,20 @@ internal class ConsumersService : IHostedService
                         }
                         catch (Exception ex)
                         {
-                            logger.LogWarning(ex, $"Failed to cancel consumer {def.QueueName}");
+                            logger.LogError(ex, $"Failed to cancel consumer {def.QueueName}");
                         }
 
                         // Update properties (including Args) BEFORE re-consuming
                         existingDef.UpdateConsumerProps(def);
 
+                        existingModel.BasicQos(0, def.QueuePrefetch, false);
+                        
                         existingDef.ConsumerTag = existingModel.BasicConsume(def.QueueName,
                             false, "", existingDef.ConsumerArgs, existingDef.ConsumerObject);
+                        
                     }
                     else 
                     {
-                        if (existingDef.QueuePrefetch != def.QueuePrefetch)
-                        {
-                            logger.LogInformation($"Prefetch changed for {def.QueueName} to {def.QueuePrefetch}.");
-                            existingModel.BasicQos(0, def.QueuePrefetch, false);
-                        }
                         existingDef.UpdateConsumerProps(def);
                     }
                 }
