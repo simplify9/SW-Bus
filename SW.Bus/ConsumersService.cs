@@ -219,10 +219,10 @@ internal class ConsumersService : IHostedService
                     var existingModel = existing.model;
                     var existingDef = existing.consumerDefinition;
 
-                    var argsChanged = !DictionariesEqual(existingDef.ConsumerArgs, def.ConsumerArgs);
+                    var prefetchChanged = existingDef.QueuePrefetch != def.QueuePrefetch;
                     var priorityChanged = existingDef.ConsumerPriority != def.ConsumerPriority;
 
-                    if (priorityChanged || argsChanged)
+                    if (priorityChanged || prefetchChanged)
                     {
                         logger.LogInformation($"Configuration changed for {def.QueueName}. Restarting consumer.");
                         try
