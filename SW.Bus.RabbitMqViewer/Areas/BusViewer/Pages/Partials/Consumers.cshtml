@@ -1,0 +1,56 @@
+@page "/bus-viewer/partials/consumers"
+@using SW.Bus.RabbitMqExtensions
+@{ Layout = null; }
+@inject IBusDashboardDataService DataService
+@{
+    var consumers = await DataService.GetConsumerHealthAsync();
+}
+
+@if (!consumers.Any())
+{
+    <p class="bv-muted">No consumers registered.</p>
+}
+else
+{
+    <table class="bv-table">
+        <thead>
+        <tr>
+            <th>Status</th>
+            <th>Consumer</th>
+            <th>Message Type</th>
+            <th>Nodes</th>
+            <th>Queue</th>
+            <th>In-Flight</th>
+            <th>Retry</th>
+            <th>Dead Letter</th>
+            <th>In Rate</th>
+            <th>Ack Rate</th>
+            <th>Prefetch</th>
+            <th>Priority</th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var c in consumers.OrderByDescending(x => x.HealthStatus).ThenBy(x => x.Name))
+        {
+            <tr class="bv-row--@c.HealthStatus.ToString().ToLower()">
+                <td><span class="bv-badge bv-badge--@c.HealthStatus.ToString().ToLower()">
+                    @(c.HealthStatus == AlertSeverity.Critical ? "⚠ Critical" :
+                      c.HealthStatus == AlertSeverity.Warning  ? "△ Warning"  : "✓ Healthy")
+                </span></td>
+                <td>@c.Name</td>
+                <td>@c.MessageName</td>
+                <td class="@(c.TotalNodes == 0 ? "bv-critical" : "")">@c.TotalNodes</td>
+                <td class="bv-mono bv-muted bv-small">@c.QueueName</td>
+                <td>@c.ProcessingCount</td>
+                <td class="@(c.RetryCount > 0 ? "bv-warning" : "")">@c.RetryCount</td>
+                <td class="@(c.FailedCount > 0 ? "bv-critical" : "")">@c.FailedCount</td>
+                <td>@c.IncomingRate.ToString("F2")</td>
+                <td>@c.AckRate.ToString("F2")</td>
+                <td>@c.Prefetch</td>
+                <td>@(c.Priority > 0 ? c.Priority.ToString() : "-")</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+

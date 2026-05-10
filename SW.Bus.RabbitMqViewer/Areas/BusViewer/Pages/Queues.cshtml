@@ -1,0 +1,17 @@
+@page "/bus-viewer/queues"
+@using SW.Bus.RabbitMqExtensions
+@inject IBusDashboardDataService DataService
+@{
+    ViewData["Title"]      = "Queue Details";
+    ViewData["ActivePage"] = "Queues";
+
+    var queues = await DataService.GetQueueDetailsAsync();
+}
+
+<div id="bv-queue-table"
+     hx-get="/bus-viewer/partials/queues"
+     hx-trigger="load, every 10s"
+     hx-swap="innerHTML">
+    <p aria-busy="true">Loading queue data…</p>
+</div>
+

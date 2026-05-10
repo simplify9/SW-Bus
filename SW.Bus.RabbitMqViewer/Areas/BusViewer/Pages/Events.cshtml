@@ -1,0 +1,43 @@
+@page "/bus-viewer/events"
+@using SW.Bus.RabbitMqExtensions
+@inject IBusDashboardDataService DataService
+@{
+    ViewData["Title"]      = "Live Operational Events";
+    ViewData["ActivePage"] = "Events";
+}
+
+<!-- Filter bar -->
+<form method="get" class="bv-filter-bar">
+    <input type="text"   name="consumer"    placeholder="Consumer name"    value="@Request.Query["consumer"]"    class="bv-filter-input"/>
+    <input type="text"   name="messageType" placeholder="Message type"     value="@Request.Query["messageType"]" class="bv-filter-input"/>
+    <input type="text"   name="correlationId" placeholder="Correlation ID" value="@Request.Query["correlationId"]" class="bv-filter-input"/>
+    <input type="text"   name="traceId"     placeholder="Trace ID"         value="@Request.Query["traceId"]"     class="bv-filter-input"/>
+    <select name="eventName" class="bv-filter-select">
+        <option value="">All event types</option>
+        @foreach (var name in new[] {
+            "MessageProcessingStarted","MessageProcessingCompleted","MessageProcessingFailed",
+            "MessageRetryScheduled","MessageMovedToDeadLetter",
+            "ConsumerConnected","ConsumerDisconnected","QueueBackpressureDetected",
+            "PublishStarted","PublishCompleted","PublishFailed" })
+        {
+            <option value="@name" selected="@(Request.Query["eventName"] == name ? "selected" : null)">@name</option>
+        }
+    </select>
+    <button type="submit" class="bv-btn">Filter</button>
+    <a href="/bus-viewer/events" class="bv-btn bv-btn--secondary">Clear</a>
+</form>
+
+<!-- Live event feed (polls every 5 s, appends query params) -->
+@{
+    var qs = new System.Text.StringBuilder("/bus-viewer/partials/events?limit=100");
+    foreach (var kv in Request.Query)
+        qs.Append($"&{kv.Key}={Uri.EscapeDataString(kv.Value!)}");
+}
+
+<div id="bv-event-feed"
+     hx-get="@qs"
+     hx-trigger="load, every 5s"
+     hx-swap="innerHTML">
+    <p aria-busy="true">Loading events…</p>
+</div>
+

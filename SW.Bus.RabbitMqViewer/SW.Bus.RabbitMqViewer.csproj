@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <AddRazorSupportForMvc>true</AddRazorSupportForMvc>
+        <PackageId>SimplyWorks.Bus.RabbitMqViewer</PackageId>
+        <Product>SimplyWorks.Bus.RabbitMqViewer</Product>
+        <Authors>Simplify9</Authors>
+        <Description>Built-in HTMX operations dashboard for SimplyWorks.Bus. Mounts a server-rendered dark-mode admin UI (Pico.css + HTMX) at a configurable route with consumer health, queue metrics, retry analysis, dead-letter inspection, and live operational events — zero JavaScript framework required.</Description>
+        <PackageTags>messagebus;rabbitmq;dashboard;aspnetcore;htmx;observability;monitoring;adminui</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/simplify9/SW-Bus</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/simplify9/SW-Bus</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <Copyright>Copyright © 2020 Simplify9</Copyright>
+        <NoWarn>$(NoWarn);1591</NoWarn>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!--
+            ASP.NET Core framework reference — gives us IApplicationBuilder, HttpContext,
+            IEndpointRouteBuilder, Razor Pages, etc. without pulling in a concrete runtime package.
+            Users install their own Microsoft.AspNetCore.App runtime.
+        -->
+        <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\SW.Bus\SW.Bus.csproj" />
+    </ItemGroup>
+
+</Project>
+

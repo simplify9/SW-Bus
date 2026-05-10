@@ -1,0 +1,31 @@
+@page "/bus-viewer/retries"
+@using SW.Bus.RabbitMqExtensions
+@inject IBusDashboardDataService DataService
+@{
+    ViewData["Title"]      = "Retry Analysis";
+    ViewData["ActivePage"] = "Retries";
+
+    var retries = await DataService.GetRetryAnalysisAsync();
+}
+
+@if (!retries.Any())
+{
+    <article class="bv-card bv-card--ok">
+        <p>✓ No retry backlogs detected. All consumers are processing cleanly.</p>
+    </article>
+}
+else
+{
+    <p class="bv-muted">
+        <strong>@retries.Length</strong> consumer(s) have messages in retry queues.
+        Auto-refreshes every 10 s.
+    </p>
+
+    <div id="bv-retry-table"
+         hx-get="/bus-viewer/partials/retries"
+         hx-trigger="load, every 10s"
+         hx-swap="innerHTML">
+        <p aria-busy="true">Loading…</p>
+    </div>
+}
+

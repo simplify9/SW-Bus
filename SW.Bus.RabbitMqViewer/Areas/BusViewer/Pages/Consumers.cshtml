@@ -1,0 +1,15 @@
+@page "/bus-viewer/consumers"
+@using SW.Bus.RabbitMqExtensions
+@inject IBusDashboardDataService DataService
+@{
+    ViewData["Title"]      = "Consumer Health";
+    ViewData["ActivePage"] = "Consumers";
+}
+
+<div id="bv-consumer-table"
+     hx-get="/bus-viewer/partials/consumers"
+     hx-trigger="load, every 10s"
+     hx-swap="innerHTML">
+    <p aria-busy="true">Loading consumer data…</p>
+</div>
+

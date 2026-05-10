@@ -1,0 +1,47 @@
+@page "/bus-viewer/partials/queues"
+@using SW.Bus.RabbitMqExtensions
+@{ Layout = null; }
+@inject IBusDashboardDataService DataService
+@{
+    var queues = await DataService.GetQueueDetailsAsync();
+}
+
+@if (!queues.Any())
+{
+    <p class="bv-muted">No queues found.</p>
+}
+else
+{
+    <table class="bv-table">
+        <thead>
+        <tr>
+            <th>Queue Name</th>
+            <th>Consumers</th>
+            <th>Ready</th>
+            <th>In-Flight</th>
+            <th>Retry Queue</th>
+            <th>Dead Letters</th>
+            <th>In Rate</th>
+            <th>Process Rate</th>
+            <th>Ack Rate</th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var q in queues.OrderByDescending(x => x.DeadLetterMessages).ThenByDescending(x => x.RetryMessages))
+        {
+            <tr class="@(q.DeadLetterMessages > 0 ? "bv-row--critical" : q.RetryMessages > 0 ? "bv-row--warning" : "")">
+                <td class="bv-mono bv-small">@q.QueueName</td>
+                <td class="@(q.Consumers == 0 ? "bv-critical" : "")">@q.Consumers</td>
+                <td>@q.Messages</td>
+                <td>@q.Unacknowledged</td>
+                <td class="@(q.RetryMessages > 0 ? "bv-warning" : "")">@q.RetryMessages</td>
+                <td class="@(q.DeadLetterMessages > 0 ? "bv-critical" : "")">@q.DeadLetterMessages</td>
+                <td>@q.IncomingRate.ToString("F2")</td>
+                <td>@q.ProcessingRate.ToString("F2")</td>
+                <td>@q.AckRate.ToString("F2")</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+

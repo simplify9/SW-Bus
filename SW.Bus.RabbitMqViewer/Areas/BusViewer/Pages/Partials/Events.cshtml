@@ -1,0 +1,96 @@
+@page "/bus-viewer/partials/events"
+@using SW.Bus.RabbitMqExtensions
+@{ Layout = null; }
+@inject IBusDashboardDataService DataService
+@{
+    int.TryParse(Request.Query["limit"], out var limit);
+    if (limit <= 0) limit = 100;
+
+    var filter = new OperationalEventFilter(
+        ConsumerName:  string.IsNullOrWhiteSpace(Request.Query["consumer"])      ? null : (string)Request.Query["consumer"]!,
+        MessageType:   string.IsNullOrWhiteSpace(Request.Query["messageType"])   ? null : (string)Request.Query["messageType"]!,
+        CorrelationId: string.IsNullOrWhiteSpace(Request.Query["correlationId"]) ? null : (string)Request.Query["correlationId"]!,
+        TraceId:       string.IsNullOrWhiteSpace(Request.Query["traceId"])       ? null : (string)Request.Query["traceId"]!,
+        EventName:     string.IsNullOrWhiteSpace(Request.Query["eventName"])     ? null : (string)Request.Query["eventName"]!,
+        Limit: limit);
+
+    var events = DataService.GetRecentEvents(filter);
+}
+
+@if (!events.Any())
+{
+    <p class="bv-muted">No events match the current filter.</p>
+}
+else
+{
+    <table class="bv-table bv-table--dense">
+        <thead>
+        <tr>
+            <th>Time (UTC)</th>
+            <th>Event</th>
+            <th>Consumer</th>
+            <th>Message Type</th>
+            <th>Queue</th>
+            <th>Correlation ID</th>
+            <th>Details</th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var ev in events)
+        {
+            if (ev is not OperationalEventBase b) continue;
+
+            var rowClass = b.EventName switch
+            {
+                "MessageProcessingFailed" or "MessageMovedToDeadLetter" or "PublishFailed" or "ConsumerDisconnected"
+                    => "bv-row--critical",
+                "MessageRetryScheduled" or "QueueBackpressureDetected"
+                    => "bv-row--warning",
+                _ => ""
+            };
+
+            <tr class="@rowClass">
+                <td class="bv-mono bv-small bv-nowrap">@b.TimestampUtc.ToString("HH:mm:ss.fff")</td>
+                <td>
+                    <span class="bv-event-name bv-event-name--@(rowClass == "bv-row--critical" ? "critical" : rowClass == "bv-row--warning" ? "warning" : "info")">
+                        @b.EventName
+                    </span>
+                </td>
+                <td>@b.ConsumerName</td>
+                <td>@b.MessageType</td>
+                <td class="bv-mono bv-muted bv-small">@b.QueueName</td>
+                <td class="bv-mono bv-small bv-muted">@(string.IsNullOrWhiteSpace(b.CorrelationId) ? "—" : b.CorrelationId[..Math.Min(12, b.CorrelationId.Length)] + "…")</td>
+                <td class="bv-small">
+                    @if (ev is MessageProcessingFailed f)
+                    {
+                        <span class="bv-exception-type">@f.ExceptionType</span><br/>
+                        <small class="bv-muted">@(f.ExceptionMessage?.Length > 80 ? f.ExceptionMessage[..80] + "…" : f.ExceptionMessage)</small>
+                    }
+                    else if (ev is MessageProcessingCompleted c)
+                    {
+                        <small>@(c.ProcessingDurationMs?.ToString("F1") ?? "?") ms</small>
+                    }
+                    else if (ev is MessageRetryScheduled r)
+                    {
+                        <small>Retry @r.RetryCount · @r.RemainingRetryCount remaining · delay @r.RetryDelaySeconds s</small>
+                    }
+                    else if (ev is PublishCompleted pc)
+                    {
+                        <small>@pc.PublishDurationMs.ToString("F1") ms · @pc.PayloadSizeBytes bytes</small>
+                    }
+                    else if (ev is ConsumerConnected cc)
+                    {
+                        <small>Tag: @cc.ConsumerTag</small>
+                    }
+                    else if (ev is QueueBackpressureDetected qb)
+                    {
+                        <small>Depth @qb.QueueDepth · threshold @qb.Threshold</small>
+                    }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+    <small class="bv-muted">Showing @events.Count most recent event(s). Use filters to narrow results.</small>
+}
+

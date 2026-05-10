@@ -1,0 +1,109 @@
+@inject ViewerOptions ViewerOptions
+@inject SW.Bus.BusOptions BusOptions
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <meta name="color-scheme" content="dark"/>
+    <title>@ViewerOptions.Title — @ViewData["Title"]</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@@picocss/pico@@2/css/pico.slate.min.css"/>
+    <link rel="stylesheet" href="/_content/SimplyWorks.Bus.RabbitMqViewer/bus-viewer.css"/>
+    <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+</head>
+<body>
+
+<div class="bv-shell">
+
+    <!-- ── Sidebar ───────────────────────────────────────────────── -->
+    <nav class="bv-sidebar">
+        <div class="bv-logo">
+            <span class="bv-logo-mark">⬡</span>
+            <span class="bv-logo-text">@ViewerOptions.Title</span>
+        </div>
+
+        <ul class="bv-nav-list">
+            <li class="@NavClass("Index")">
+                <a href="/bus-viewer">
+                    <span class="bv-icon">◈</span> Overview
+                </a>
+            </li>
+            <li class="@NavClass("Consumers")">
+                <a href="/bus-viewer/consumers">
+                    <span class="bv-icon">⊞</span> Consumers
+                </a>
+            </li>
+            <li class="@NavClass("Queues")">
+                <a href="/bus-viewer/queues">
+                    <span class="bv-icon">↯</span> Queues
+                </a>
+            </li>
+            <li class="@NavClass("Retries")">
+                <a href="/bus-viewer/retries">
+                    <span class="bv-icon">↺</span> Retries
+                </a>
+            </li>
+            <li class="@NavClass("DeadLetters")">
+                <a href="/bus-viewer/dead-letters">
+                    <span class="bv-icon">☠</span> Dead Letters
+                </a>
+            </li>
+            <li class="@NavClass("Events")">
+                <a href="/bus-viewer/events">
+                    <span class="bv-icon">⚡</span> Live Events
+                </a>
+            </li>
+        </ul>
+
+        <div class="bv-sidebar-footer">
+            <small>
+                <span class="bv-badge bv-badge-env">@BusOptions.EnvironmentName</span><br/>
+                @if (!string.IsNullOrWhiteSpace(BusOptions.ApplicationName))
+                {
+                    <span class="bv-muted">@BusOptions.ApplicationName</span>
+                }
+            </small>
+        </div>
+    </nav>
+
+    <!-- ── Main area ─────────────────────────────────────────────── -->
+    <div class="bv-main">
+
+        <!-- Top bar -->
+        <header class="bv-topbar">
+            <h1 class="bv-page-title">@ViewData["Title"]</h1>
+            <div class="bv-topbar-right">
+                <div id="bv-alert-banner"
+                     hx-get="/bus-viewer/partials/alerts"
+                     hx-trigger="load, every 15s"
+                     hx-swap="innerHTML">
+                </div>
+                <small class="bv-muted" id="bv-last-refresh">Refreshing…</small>
+            </div>
+        </header>
+
+        <!-- Page content -->
+        <main class="bv-content">
+            @RenderBody()
+        </main>
+
+    </div><!-- /.bv-main -->
+
+</div><!-- /.bv-shell -->
+
+<script>
+    // Update "Last refreshed" timestamp after every HTMX swap
+    document.addEventListener('htmx:afterSwap', function () {
+        const el = document.getElementById('bv-last-refresh');
+        if (el) el.textContent = 'Updated ' + new Date().toLocaleTimeString();
+    });
+</script>
+
+</body>
+</html>
+
+@functions {
+    private string NavClass(string page) =>
+        ViewData["ActivePage"]?.ToString() == page ? "bv-nav-active" : string.Empty;
+}
+

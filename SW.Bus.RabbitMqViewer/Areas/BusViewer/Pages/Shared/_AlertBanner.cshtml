@@ -1,0 +1,15 @@
+@* HTMX partial — targetted by #bv-alert-banner in the layout *@
+@model IReadOnlyList<SW.Bus.RabbitMqExtensions.DashboardAlert>
+
+@if (Model != null && Model.Count > 0)
+{
+    var critical = Model.Count(a => a.Severity == SW.Bus.RabbitMqExtensions.AlertSeverity.Critical);
+    var warning  = Model.Count(a => a.Severity == SW.Bus.RabbitMqExtensions.AlertSeverity.Warning);
+
+    <span class="bv-alert-pill bv-alert-pill--@(critical > 0 ? "critical" : "warning")"
+          title="@Model.Count alert(s) — click Consumers for details">
+        @if (critical > 0) { <span>⚠ @critical critical</span> }
+        @if (warning  > 0) { <span>△ @warning warning</span> }
+    </span>
+}
+

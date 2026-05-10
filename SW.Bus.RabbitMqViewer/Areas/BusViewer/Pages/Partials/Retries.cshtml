@@ -1,0 +1,43 @@
+@page "/bus-viewer/partials/retries"
+@using SW.Bus.RabbitMqExtensions
+@{ Layout = null; }
+@inject IBusDashboardDataService DataService
+@{
+    var retries = await DataService.GetRetryAnalysisAsync();
+}
+
+@if (!retries.Any())
+{
+    <p class="bv-muted">✓ No retry backlogs.</p>
+}
+else
+{
+    <table class="bv-table">
+        <thead>
+        <tr>
+            <th>Severity</th>
+            <th>Consumer</th>
+            <th>Message Type</th>
+            <th>Retry Backlog</th>
+            <th>In Rate (msg/s)</th>
+            <th>Ack Rate (msg/s)</th>
+            <th>Queue</th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var r in retries)
+        {
+            <tr class="bv-row--@r.Severity.ToString().ToLower()">
+                <td><span class="bv-badge bv-badge--@r.Severity.ToString().ToLower()">@r.Severity</span></td>
+                <td>@r.ConsumerName</td>
+                <td>@r.MessageName</td>
+                <td class="bv-critical">@r.RetryBacklog.ToString("N0")</td>
+                <td>@r.IncomingRate.ToString("F2")</td>
+                <td>@r.AckRate.ToString("F2")</td>
+                <td class="bv-mono bv-muted bv-small">@r.QueueName</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+

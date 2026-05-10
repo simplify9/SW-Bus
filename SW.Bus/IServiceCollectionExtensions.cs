@@ -1,4 +1,4 @@
-﻿﻿using Microsoft.Extensions.Configuration;
+﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -78,8 +78,19 @@ namespace SW.Bus
             services.AddSingleton<BusMetrics>();
             services.AddSingleton<OperationalEventBuffer>();
             services.AddSingleton<IOperationalEventPublisher, OperationalEventChannelPublisher>();
-            services.TryAddEnumerable(ServiceDescriptor.Singleton<IOperationalEventBatchSink, NullOperationalEventBatchSink>());
             services.AddHostedService<OperationalEventDispatcher>();
+
+            // Dashboard data layer — in-memory event ring buffer is registered as both
+            // IOperationalEventBatchSink (receives from dispatcher) and IOperationalEventStore
+            // (queried by the dashboard). Additional sinks (Elasticsearch, ClickHouse, etc.)
+            // can be added by the caller via AddSingleton<IOperationalEventBatchSink, MySink>().
+            services.AddSingleton<InMemoryOperationalEventStore>();
+            services.AddSingleton<IOperationalEventStore>(sp =>
+                sp.GetRequiredService<InMemoryOperationalEventStore>());
+            services.AddSingleton<IOperationalEventBatchSink>(sp =>
+                sp.GetRequiredService<InMemoryOperationalEventStore>());
+            services.TryAddSingleton<IAlertEvaluator, AlertEvaluator>();
+            services.TryAddSingleton<IBusDashboardDataService, BusDashboardDataService>();
 
             using var conn = factory.CreateConnection();
             using var model = conn.CreateModel();

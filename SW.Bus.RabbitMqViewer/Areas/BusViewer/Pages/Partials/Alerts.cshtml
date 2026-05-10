@@ -1,0 +1,10 @@
+@page "/bus-viewer/partials/alerts"
+@using SW.Bus.RabbitMqExtensions
+@{ Layout = null; }
+@inject IBusDashboardDataService DataService
+@{
+    var consumers = await DataService.GetConsumerHealthAsync();
+    var alerts    = await DataService.GetAlertsAsync(consumers);
+}
+@await Html.PartialAsync("~/Areas/BusViewer/Pages/Shared/_AlertBanner.cshtml", alerts)
+

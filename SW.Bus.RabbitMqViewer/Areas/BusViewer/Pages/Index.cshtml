@@ -1,0 +1,111 @@
+@page "/bus-viewer"
+@using SW.Bus.RabbitMqExtensions
+@inject IBusDashboardDataService DataService
+@{
+    ViewData["Title"]      = "Overview";
+    ViewData["ActivePage"] = "Index";
+
+    var summary   = await DataService.GetSummaryAsync();
+    var consumers = await DataService.GetConsumerHealthAsync();
+    var alerts    = await DataService.GetAlertsAsync(consumers);
+}
+
+<!-- ── Summary cards ─────────────────────────────────────────────────── -->
+<div class="bv-card-grid">
+
+    <article class="bv-card @(summary.DisconnectedConsumers > 0 ? "bv-card--critical" : summary.UnhealthyConsumers > 0 ? "bv-card--warning" : "bv-card--ok")">
+        <header>Consumers</header>
+        <p class="bv-stat">@summary.TotalConsumers</p>
+        <small>
+            @summary.UnhealthyConsumers unhealthy ·
+            @summary.DisconnectedConsumers disconnected
+        </small>
+    </article>
+
+    <article class="bv-card @(summary.TotalDeadLetterBacklog > 0 ? "bv-card--critical" : "bv-card--ok")">
+        <header>Dead Letters</header>
+        <p class="bv-stat">@summary.TotalDeadLetterBacklog.ToString("N0")</p>
+        <small>across all queues</small>
+    </article>
+
+    <article class="bv-card @(summary.TotalRetryBacklog > 100 ? "bv-card--critical" : summary.TotalRetryBacklog > 0 ? "bv-card--warning" : "bv-card--ok")">
+        <header>Retry Backlog</header>
+        <p class="bv-stat">@summary.TotalRetryBacklog.ToString("N0")</p>
+        <small>messages pending retry</small>
+    </article>
+
+    <article class="bv-card @(summary.TotalQueueDepth > 5000 ? "bv-card--warning" : "bv-card--ok")">
+        <header>Queue Depth</header>
+        <p class="bv-stat">@summary.TotalQueueDepth.ToString("N0")</p>
+        <small>waiting to be processed</small>
+    </article>
+
+    <article class="bv-card bv-card--ok">
+        <header>Throughput</header>
+        <p class="bv-stat">@summary.TotalAckRate.ToString("F1") <span class="bv-unit">msg/s</span></p>
+        <small>@summary.TotalIncomingRate.ToString("F1") msg/s incoming</small>
+    </article>
+
+    <article class="bv-card @(summary.ActiveAlerts > 0 ? "bv-card--warning" : "bv-card--ok")">
+        <header>Active Alerts</header>
+        <p class="bv-stat">@summary.ActiveAlerts</p>
+        <small>Last updated @summary.LastUpdatedUtc.ToString("HH:mm:ss") UTC</small>
+    </article>
+
+</div>
+
+<!-- ── Consumer health table (auto-refreshes every 10 s) ────────────── -->
+<section class="bv-section">
+    <h2>Consumer Health</h2>
+    <div id="bv-consumer-table"
+         hx-get="/bus-viewer/partials/consumers"
+         hx-trigger="load, every 10s"
+         hx-swap="innerHTML">
+        <p aria-busy="true">Loading…</p>
+    </div>
+</section>
+
+<!-- ── Active alerts ─────────────────────────────────────────────────── -->
+@if (alerts.Count > 0)
+{
+    <section class="bv-section">
+        <h2>Active Alerts</h2>
+        <table class="bv-table">
+            <thead>
+            <tr>
+                <th>Severity</th>
+                <th>Title</th>
+                <th>Consumer</th>
+                <th>Queue</th>
+                <th>Detail</th>
+                <th>Time</th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach (var a in alerts.OrderByDescending(x => x.Severity))
+            {
+                <tr class="bv-row--@a.Severity.ToString().ToLower()">
+                    <td><span class="bv-badge bv-badge--@a.Severity.ToString().ToLower()">@a.Severity</span></td>
+                    <td>@a.Title</td>
+                    <td>@a.ConsumerName</td>
+                    <td class="bv-mono bv-muted">@a.QueueName</td>
+                    <td>@a.Detail</td>
+                    <td class="bv-muted">@a.TimestampUtc.ToString("HH:mm:ss")</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </section>
+}
+
+<!-- ── Live event feed (last 20, refreshes every 5 s) ───────────────── -->
+<section class="bv-section">
+    <h2>Live Activity <small class="bv-muted">(last 20 events)</small></h2>
+    <div id="bv-event-feed"
+         hx-get="/bus-viewer/partials/events?limit=20"
+         hx-trigger="load, every 5s"
+         hx-swap="innerHTML">
+        <p aria-busy="true">Loading…</p>
+    </div>
+</section>
+

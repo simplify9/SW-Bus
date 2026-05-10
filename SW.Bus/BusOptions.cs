@@ -82,6 +82,32 @@ namespace SW.Bus
         /// Default: 5000.
         /// </summary>
         public long QueueBackpressureThreshold { get; set; } = 5000;
+
+        /// <summary>
+        /// Gets or sets the capacity of the in-memory operational event ring buffer.
+        /// When the buffer is full, oldest events are overwritten.
+        /// Default: 10000. Minimum enforced value: 1000.
+        /// </summary>
+        public int OperationalEventsStoreCapacity { get; set; } = 10000;
+
+        /// <summary>
+        /// Gets or sets the retry-queue backlog count that triggers a <c>Warning</c> alert.
+        /// Default: 10.
+        /// </summary>
+        public int AlertRetryWarningThreshold { get; set; } = 10;
+
+        /// <summary>
+        /// Gets or sets the retry-queue backlog count that escalates an alert to <c>Critical</c>.
+        /// Default: 100.
+        /// </summary>
+        public int AlertRetryCriticalThreshold { get; set; } = 100;
+
+        /// <summary>
+        /// Gets or sets the dead-letter backlog count that escalates an alert to <c>Critical</c>.
+        /// Any dead-letter count greater than zero triggers a <c>Warning</c> automatically.
+        /// Default: 100.
+        /// </summary>
+        public int AlertDeadLetterCriticalThreshold { get; set; } = 100;
         
         /// <summary>
         /// Gets or sets the cache duration in seconds for RabbitMQ management API monitoring data.
