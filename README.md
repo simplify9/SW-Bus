@@ -14,6 +14,7 @@ A lightweight .NET 8 message bus library built on top of RabbitMQ, designed to s
 - 🎯 **Typed Consumers**: Strong-typed message consumers with `IConsume<T>`
 - 📻 **Event Listeners**: Broadcast listeners with `IListen<T>` for cross-application communication
 - 🔐 **JWT Integration**: Built-in JWT token propagation for authenticated messaging
+- 📈 **Operational Events Pipeline**: Structured lifecycle events for publish/consume/retry/dead-letter observability
 - 🏗️ **ASP.NET Core Integration**: Seamless dependency injection and hosted service integration
 - 🧪 **Testing Support**: Mock publisher for unit testing scenarios
 
@@ -263,6 +264,38 @@ Refresh consumers dynamically at runtime:
 
 ```csharp
 await _broadcaster.RefreshConsumers();
+```
+
+### Operational Events (Diagnostics Pipeline)
+
+SW.Bus now emits structured lifecycle events internally (for example: `PublishStarted`,
+`MessageProcessingFailed`, `MessageRetryScheduled`, `MessageMovedToDeadLetter`,
+`ConsumerConnected`, and `QueueBackpressureDetected`).
+
+To persist these events, register one or more `IOperationalEventBatchSink` implementations:
+
+```csharp
+using SW.Bus.RabbitMqExtensions;
+
+public class MyOpsSink : IOperationalEventBatchSink
+{
+    public Task PublishBatch(IReadOnlyList<IOperationalEvent> events, CancellationToken cancellationToken = default)
+    {
+        // Forward to Elasticsearch / ClickHouse / OTLP collector / etc.
+        return Task.CompletedTask;
+    }
+}
+
+services.AddSingleton<IOperationalEventBatchSink, MyOpsSink>();
+
+services.AddBus(options =>
+{
+    options.OperationalEventsEnabled = true;
+    options.OperationalEventsBufferCapacity = 8192;
+    options.OperationalEventsBatchSize = 256;
+    options.OperationalEventsFlushIntervalMs = 1000;
+    options.QueueBackpressureThreshold = 5000;
+});
 ```
 
 ## Architecture

@@ -37,6 +37,51 @@ namespace SW.Bus
         }
         
         private int monitoringCacheSeconds = 5;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether operational lifecycle events are emitted.
+        /// Default: true.
+        /// </summary>
+        public bool OperationalEventsEnabled { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets the in-memory channel capacity used to buffer operational events before flushing.
+        /// Default: 8192.
+        /// </summary>
+        public int OperationalEventsBufferCapacity { get; set; } = 8192;
+
+        /// <summary>
+        /// Gets or sets the maximum number of operational events per flush batch.
+        /// Default: 256.
+        /// </summary>
+        public int OperationalEventsBatchSize { get; set; } = 256;
+
+        /// <summary>
+        /// Gets or sets the flush interval (milliseconds) for operational event batches.
+        /// Default: 1000 milliseconds.
+        /// </summary>
+        public int OperationalEventsFlushIntervalMs { get; set; } = 1000;
+
+        /// <summary>
+        /// Gets or sets whether to drop oldest events when the operational event buffer is full.
+        /// When false, new events are dropped.
+        /// Default: true.
+        /// </summary>
+        public bool OperationalEventsDropOldest { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets the schema version added to emitted operational events.
+        /// Increment when adding a breaking contract change.
+        /// Default: 1.0.
+        /// </summary>
+        public string OperationalEventsSchemaVersion { get; set; } = "1.0";
+
+        /// <summary>
+        /// Gets or sets the queue depth threshold that triggers <c>QueueBackpressureDetected</c> events.
+        /// Set to 0 to disable queue backpressure checks.
+        /// Default: 5000.
+        /// </summary>
+        public long QueueBackpressureThreshold { get; set; } = 5000;
         
         /// <summary>
         /// Gets or sets the cache duration in seconds for RabbitMQ management API monitoring data.
@@ -206,6 +251,11 @@ namespace SW.Bus
         
         public string ProcessExchange { get; }
         public string DeadLetterExchange { get; }
+
+        /// <summary>
+        /// Gets the environment name passed into the bus options constructor.
+        /// </summary>
+        public string EnvironmentName => environment;
 
         public string NodeExchange =>
             $"{versionPrefix}{environment}{(string.IsNullOrWhiteSpace(ApplicationName) ? "" : $".{ApplicationName}")}.node".ToLower();

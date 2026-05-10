@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -9,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using SW.Bus.RabbitMqExtensions;
 using SW.HttpExtensions;
 using SW.PrimitiveTypes;
 
@@ -18,13 +20,22 @@ namespace SW.Bus
     {
         private readonly IServiceProvider sp;
         private readonly BusOptions busOptions;
+        private readonly IOperationalEventPublisher operationalEventPublisher;
+        private readonly BusMetrics metrics;
 
         private readonly ILogger<ConsumerRunner> logger;
 
-        public ConsumerRunner(IServiceProvider sp, BusOptions busOptions, ILogger<ConsumerRunner> logger)
+        public ConsumerRunner(
+            IServiceProvider sp,
+            BusOptions busOptions,
+            IOperationalEventPublisher operationalEventPublisher,
+            BusMetrics metrics,
+            ILogger<ConsumerRunner> logger)
         {
             this.sp = sp;
             this.busOptions = busOptions;
+            this.operationalEventPublisher = operationalEventPublisher;
+            this.metrics = metrics;
             this.logger = logger;
         }
 
@@ -44,6 +55,41 @@ namespace SW.Bus
             }
 
             var message = "";
+            var payloadSizeBytes = (long)ea.Body.Length;
+            var currentRetryCount = Math.Max(consumerDefinition.RetryCount - remainingRetryCount, 0);
+            var parentContext = OperationalEventEnvelope.ExtractParentContext(ea.BasicProperties);
+            using var activity = BusDiagnostics.ActivitySource.StartActivity(
+                $"bus.consume {consumerDefinition.MessageTypeName}",
+                ActivityKind.Consumer,
+                parentContext);
+            var stopwatch = Stopwatch.StartNew();
+
+            var commonMessageId = OperationalEventEnvelope.GetMessageId(ea.BasicProperties);
+            var commonCorrelationId = OperationalEventEnvelope.GetCorrelationId(ea.BasicProperties);
+            var commonCausationId = OperationalEventEnvelope.GetCausationId(ea.BasicProperties);
+            var traceId = activity?.TraceId.ToString() ?? OperationalEventEnvelope.GetTraceId(ea.BasicProperties);
+            var spanId = activity?.SpanId.ToString() ?? OperationalEventEnvelope.GetSpanId(ea.BasicProperties);
+
+            metrics.ProcessingStarted.Add(1);
+            FireAndForget(new MessageProcessingStarted(
+                DateTime.UtcNow,
+                busOptions.OperationalEventsSchemaVersion,
+                Environment.MachineName,
+                busOptions.EnvironmentName,
+                busOptions.ApplicationName ?? string.Empty,
+                busOptions.ProcessExchange,
+                consumerDefinition.QueueName,
+                consumerDefinition.ServiceType?.Name ?? string.Empty,
+                consumerDefinition.MessageTypeName,
+                commonMessageId,
+                commonCorrelationId,
+                commonCausationId,
+                traceId,
+                spanId,
+                ea.DeliveryTag,
+                currentRetryCount,
+                payloadSizeBytes));
+
             try
             {
                 using var scope = sp.CreateScope();
@@ -62,13 +108,80 @@ namespace SW.Bus
                 }
 
                 model.BasicAck(ea.DeliveryTag, false);
+                stopwatch.Stop();
+                metrics.ProcessingCompleted.Add(1);
+                metrics.ProcessingLatencyMs.Record(stopwatch.Elapsed.TotalMilliseconds);
+                FireAndForget(new MessageProcessingCompleted(
+                    DateTime.UtcNow,
+                    busOptions.OperationalEventsSchemaVersion,
+                    Environment.MachineName,
+                    busOptions.EnvironmentName,
+                    busOptions.ApplicationName ?? string.Empty,
+                    busOptions.ProcessExchange,
+                    consumerDefinition.QueueName,
+                    consumerDefinition.ServiceType?.Name ?? string.Empty,
+                    consumerDefinition.MessageTypeName,
+                    commonMessageId,
+                    commonCorrelationId,
+                    commonCausationId,
+                    traceId,
+                    spanId,
+                    ea.DeliveryTag,
+                    stopwatch.Elapsed.TotalMilliseconds,
+                    currentRetryCount,
+                    payloadSizeBytes));
             }
             catch (Exception ex)
             {
+                stopwatch.Stop();
+                metrics.ProcessingFailed.Add(1);
+                FireAndForget(new MessageProcessingFailed(
+                    DateTime.UtcNow,
+                    busOptions.OperationalEventsSchemaVersion,
+                    Environment.MachineName,
+                    busOptions.EnvironmentName,
+                    busOptions.ApplicationName ?? string.Empty,
+                    busOptions.ProcessExchange,
+                    consumerDefinition.QueueName,
+                    consumerDefinition.ServiceType?.Name ?? string.Empty,
+                    consumerDefinition.MessageTypeName,
+                    commonMessageId,
+                    commonCorrelationId,
+                    commonCausationId,
+                    traceId,
+                    spanId,
+                    ea.DeliveryTag,
+                    stopwatch.Elapsed.TotalMilliseconds,
+                    currentRetryCount,
+                    ex.GetType().FullName ?? ex.GetType().Name,
+                    ex.Message,
+                    ex.StackTrace,
+                    payloadSizeBytes));
+
                 if (remainingRetryCount != 0)
                 {
                     // reject the message, will be sent to wait queue
                     model.BasicReject(ea.DeliveryTag, false);
+                    metrics.RetryScheduled.Add(1);
+                    FireAndForget(new MessageRetryScheduled(
+                        DateTime.UtcNow,
+                        busOptions.OperationalEventsSchemaVersion,
+                        Environment.MachineName,
+                        busOptions.EnvironmentName,
+                        busOptions.ApplicationName ?? string.Empty,
+                        busOptions.ProcessExchange,
+                        consumerDefinition.QueueName,
+                        consumerDefinition.ServiceType?.Name ?? string.Empty,
+                        consumerDefinition.MessageTypeName,
+                        commonMessageId,
+                        commonCorrelationId,
+                        commonCausationId,
+                        traceId,
+                        spanId,
+                        ea.DeliveryTag,
+                        currentRetryCount,
+                        remainingRetryCount,
+                        consumerDefinition.RetryAfter));
                     logger.LogWarning(ex,
                         @$"Failed to process message '{consumerDefinition.MessageTypeName}', in '{consumerDefinition.ServiceType.Name}'. Number of retries remaining {remainingRetryCount}.
                             Total retries configured {consumerDefinition.RetryCount}.
@@ -81,6 +194,25 @@ namespace SW.Bus
                         @$"Failed to process message '{consumerDefinition.MessageTypeName}', in '{consumerDefinition.ServiceType.Name}'. Message {message}, Total retries {consumerDefinition.RetryCount}");
 
                     await PublishBad(model, ea.Body, ea.BasicProperties, busOptions.DeadLetterExchange, consumerDefinition.BadRoutingKey, ex);
+                    metrics.DeadLetterMoved.Add(1);
+                    FireAndForget(new MessageMovedToDeadLetter(
+                        DateTime.UtcNow,
+                        busOptions.OperationalEventsSchemaVersion,
+                        Environment.MachineName,
+                        busOptions.EnvironmentName,
+                        busOptions.ApplicationName ?? string.Empty,
+                        busOptions.ProcessExchange,
+                        consumerDefinition.QueueName,
+                        consumerDefinition.ServiceType?.Name ?? string.Empty,
+                        consumerDefinition.MessageTypeName,
+                        commonMessageId,
+                        commonCorrelationId,
+                        commonCausationId,
+                        traceId,
+                        spanId,
+                        ea.DeliveryTag,
+                        busOptions.DeadLetterExchange,
+                        consumerDefinition.BadRoutingKey));
                 }
             }
         }
@@ -101,6 +233,17 @@ namespace SW.Bus
             }
 
             var message = "";
+            var payloadSizeBytes = (long)ea.Body.Length;
+            var currentRetryCount = Math.Max(busOptions.ListenRetryCount - remainingRetryCount, 0);
+            var parentContext = OperationalEventEnvelope.ExtractParentContext(ea.BasicProperties);
+            using var activity = BusDiagnostics.ActivitySource.StartActivity("bus.listen node", ActivityKind.Consumer, parentContext);
+            var stopwatch = Stopwatch.StartNew();
+            var commonMessageId = OperationalEventEnvelope.GetMessageId(ea.BasicProperties);
+            var commonCorrelationId = OperationalEventEnvelope.GetCorrelationId(ea.BasicProperties);
+            var commonCausationId = OperationalEventEnvelope.GetCausationId(ea.BasicProperties);
+            var traceId = activity?.TraceId.ToString() ?? OperationalEventEnvelope.GetTraceId(ea.BasicProperties);
+            var spanId = activity?.SpanId.ToString() ?? OperationalEventEnvelope.GetSpanId(ea.BasicProperties);
+
             MethodInfo processMethod = null;
             MethodInfo failMethod = null;
             ListenerDefinition listenerDefinition = null;
@@ -135,13 +278,19 @@ namespace SW.Bus
                 }
 
                 model.BasicAck(ea.DeliveryTag, false);
+                stopwatch.Stop();
+                metrics.ProcessingCompleted.Add(1);
+                metrics.ProcessingLatencyMs.Record(stopwatch.Elapsed.TotalMilliseconds);
             }
             catch (Exception ex)
             {
+                stopwatch.Stop();
+                metrics.ProcessingFailed.Add(1);
                 if (remainingRetryCount != 0)
                 {
                     // reject the message, will be sent to wait queue
                     model.BasicReject(ea.DeliveryTag, false);
+                    metrics.RetryScheduled.Add(1);
                     await RunOnFail(svc, failMethod, ex, message);
                     logger.LogWarning(ex,
                         @$"Failed to process message '{listenerDefinition?.MessageTypeName ?? message}', 
@@ -159,8 +308,32 @@ namespace SW.Bus
                            Message {message}, Total retries {busOptions.ListenRetryCount}");
 
                     await PublishBad(model, ea.Body, ea.BasicProperties,busOptions.NodeDeadLetterExchange, busOptions.NodeBadRoutingKey, ex);
+                    metrics.DeadLetterMoved.Add(1);
                     await RunOnFail(svc, failMethod, ex, message);
                 }
+
+                FireAndForget(new MessageProcessingFailed(
+                    DateTime.UtcNow,
+                    busOptions.OperationalEventsSchemaVersion,
+                    Environment.MachineName,
+                    busOptions.EnvironmentName,
+                    busOptions.ApplicationName ?? string.Empty,
+                    busOptions.NodeExchange,
+                    busOptions.NodeQueueName,
+                    listenerDefinition?.ServiceType?.Name ?? "node-listener",
+                    listenerDefinition?.MessageTypeName ?? "node-control",
+                    commonMessageId,
+                    commonCorrelationId,
+                    commonCausationId,
+                    traceId,
+                    spanId,
+                    ea.DeliveryTag,
+                    stopwatch.Elapsed.TotalMilliseconds,
+                    currentRetryCount,
+                    ex.GetType().FullName ?? ex.GetType().Name,
+                    ex.Message,
+                    ex.StackTrace,
+                    payloadSizeBytes));
             }
         }
 
@@ -245,6 +418,11 @@ namespace SW.Bus
             model.BasicPublish(exchange, routingKey, props, body);
 
             return Task.CompletedTask;
+        }
+
+        private void FireAndForget(IOperationalEvent evt)
+        {
+            _ = operationalEventPublisher.Publish(evt);
         }
     }
 }

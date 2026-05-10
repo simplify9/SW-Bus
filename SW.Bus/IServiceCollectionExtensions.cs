@@ -1,5 +1,6 @@
 ﻿﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using RabbitMQ.Client;
 using SW.HttpExtensions;
@@ -74,6 +75,11 @@ namespace SW.Bus
             services.AddSingleton<IConsumerReader, ConsumerReader>();
             services.AddSingleton<ConsumerDiscovery>();
             services.AddMemoryCache();
+            services.AddSingleton<BusMetrics>();
+            services.AddSingleton<OperationalEventBuffer>();
+            services.AddSingleton<IOperationalEventPublisher, OperationalEventChannelPublisher>();
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IOperationalEventBatchSink, NullOperationalEventBatchSink>());
+            services.AddHostedService<OperationalEventDispatcher>();
 
             using var conn = factory.CreateConnection();
             using var model = conn.CreateModel();
@@ -130,7 +136,9 @@ namespace SW.Bus
             return services.AddScoped(serviceProvider => new BasicPublisher(
                 model,
                 serviceProvider.GetRequiredService<BusOptions>(),
-                serviceProvider.GetRequiredService<RequestContext>()))
+                serviceProvider.GetRequiredService<RequestContext>(),
+                serviceProvider.GetRequiredService<IOperationalEventPublisher>(),
+                serviceProvider.GetRequiredService<BusMetrics>()))
             .AddScoped<IPublish, Publisher>(serviceProvider => new Publisher(
                 serviceProvider.GetRequiredService<BasicPublisher>(),
                 busOptions.ProcessExchange))
