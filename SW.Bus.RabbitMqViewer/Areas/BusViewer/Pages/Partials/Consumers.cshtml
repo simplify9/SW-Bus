@@ -1,4 +1,5 @@
 @page "/bus-viewer/partials/consumers"
+@attribute [AllowAnonymous]
 @using SW.Bus.RabbitMqExtensions
 @{ Layout = null; }
 @inject IBusDashboardDataService DataService
@@ -32,11 +33,22 @@ else
         <tbody>
         @foreach (var c in consumers.OrderByDescending(x => x.HealthStatus).ThenBy(x => x.Name))
         {
+            var tooltipText = BuildCriticalTooltip(c);
             <tr class="bv-row--@c.HealthStatus.ToString().ToLower()">
-                <td><span class="bv-badge bv-badge--@c.HealthStatus.ToString().ToLower()">
-                    @(c.HealthStatus == AlertSeverity.Critical ? "⚠ Critical" :
-                      c.HealthStatus == AlertSeverity.Warning  ? "△ Warning"  : "✓ Healthy")
-                </span></td>
+                <td>
+                    @if (c.HealthStatus == AlertSeverity.Critical && !string.IsNullOrEmpty(tooltipText))
+                    {
+                        <span class="bv-badge bv-badge--critical" data-bv-tooltip="@tooltipText">⚠ Critical</span>
+                    }
+                    else if (c.HealthStatus == AlertSeverity.Warning)
+                    {
+                        <span class="bv-badge bv-badge--warning">△ Warning</span>
+                    }
+                    else
+                    {
+                        <span class="bv-badge bv-badge--info">✓ Healthy</span>
+                    }
+                </td>
                 <td>@c.Name</td>
                 <td>@c.MessageName</td>
                 <td class="@(c.TotalNodes == 0 ? "bv-critical" : "")">@c.TotalNodes</td>
@@ -54,3 +66,32 @@ else
     </table>
 }
 
+@functions {
+    /// <summary>
+    /// Builds a human-readable tooltip explaining why a consumer is in Critical state.
+    /// Returns an empty string for non-critical consumers.
+    /// </summary>
+    private static string BuildCriticalTooltip(ConsumerHealthView c)
+    {
+        if (c.HealthStatus != AlertSeverity.Critical) return string.Empty;
+
+        var reasons = new System.Text.StringBuilder();
+
+        if (c.TotalNodes == 0)
+            reasons.AppendLine("• No active nodes — consumer disconnected.");
+
+        if (c.FailedCount > 0)
+            reasons.AppendLine($"• {c.FailedCount:N0} message(s) in dead-letter queue.");
+
+        if (c.RetryCount > 0)
+            reasons.AppendLine($"• {c.RetryCount:N0} message(s) in retry queue.");
+
+        if (c.IsBackpressured)
+            reasons.AppendLine($"• Queue backpressure ({c.QueueCount:N0} messages waiting).");
+
+        if (c.IncomingRate > 1.0 && c.AckRate < 0.01)
+            reasons.AppendLine($"• Publish/Ack imbalance — {c.IncomingRate:F1} msg/s in, ack rate ≈ 0.");
+
+        return reasons.ToString().Trim();
+    }
+}

@@ -14,7 +14,7 @@ The library ships as three complementary NuGet packages:
 |---|---|
 | `SimplyWorks.Bus` | Core runtime — publishing, consuming, retries, dead-letter, tracing |
 | `SimplyWorks.Bus.RabbitMqExtensions` | Public contracts, consumer interfaces, dashboard data models |
-| `SimplyWorks.Bus.RabbitMqViewer` | Built-in dark-mode HTMX operations dashboard (zero JS framework) |
+| `SimplyWorks.Bus.RabbitMqViewer` | Built-in HTMX operations dashboard (dark + light mode, zero JS framework) |
 
 ---
 
@@ -33,15 +33,12 @@ The library ships as three complementary NuGet packages:
 11. [Operational Events Pipeline](#operational-events-pipeline)
 12. [Dashboard Data Service — IBusDashboardDataService](#dashboard-data-service--ibusdashboarddataservice)
 13. [Custom Alert Thresholds — IAlertEvaluator](#custom-alert-thresholds--ialertevaluator)
-14. [Operations Viewer Dashboard](#operations-viewer-dashboard)
-15. [Full BusOptions Reference](#full-busoptions-reference)
-16. [Architecture](#architecture)
-17. [Testing](#testing)
-18. [Dependencies](#dependencies)
-
-## Features
-
----
+14. [Building a Custom Dashboard](#building-a-custom-dashboard)
+15. [Operations Viewer Dashboard](#operations-viewer-dashboard)
+16. [Full BusOptions Reference](#full-busoptions-reference)
+17. [Architecture](#architecture)
+18. [Testing](#testing)
+19. [Dependencies](#dependencies)
 
 ## Features
 
@@ -54,8 +51,8 @@ The library ships as three complementary NuGet packages:
 - 📊 **Queue Monitoring** — live queue depth, rates, and consumer counts via `IConsumerReader`
 - 🔍 **Error Queue Inspection** — peek retry and dead-letter queues via `IErrorQueueReader`
 - 📈 **Operational Events** — structured lifecycle events with `ActivitySource` tracing and `Meter` metrics
-- 🖥️ **Built-in Dashboard** — dark-mode HTMX admin UI via `SimplyWorks.Bus.RabbitMqViewer`
-- 🏗️ **ASP.NET Core Integration** — hosted service, DI, minimal API compatibility
+- 🖥️ **Built-in Dashboard** — HTMX admin UI with dark/light mode toggle, form-based login, CSS refresh animations, and critical status tooltips via `SimplyWorks.Bus.RabbitMqViewer`
+- 🏗️ **Custom Dashboard API** — all data exposed through `IBusDashboardDataService` in `SimplyWorks.Bus.RabbitMqExtensions` — build your own UI without the viewer package
 - 🧪 **Testing Support** — mock publisher for unit testing
 
 ---
@@ -467,7 +464,7 @@ services.AddBus(config =>
     config.OperationalEventsBufferCapacity  = 8192;   // channel buffer before drop
     config.OperationalEventsBatchSize       = 256;    // events per flush batch
     config.OperationalEventsFlushIntervalMs = 1000;   // ms between flushes
-    config.OperationalEventsDropOldest      = true;   // drop strategy when full
+    config.OperationalEventsDropOldest      = true;    // drop strategy when full
     config.OperationalEventsSchemaVersion   = "1.0";  // stamped on every event
     config.OperationalEventsStoreCapacity   = 10000;  // in-memory ring buffer size
 });
@@ -477,7 +474,7 @@ services.AddBus(config =>
 
 ## Dashboard Data Service — `IBusDashboardDataService`
 
-All dashboard data is exposed through `IBusDashboardDataService` (defined in `SimplyWorks.Bus.RabbitMqExtensions`, implemented and registered by `SimplyWorks.Bus`). Inject it directly to build your own custom dashboard, REST API, or health probe — no dependency on `SimplyWorks.Bus.RabbitMqViewer` needed.
+All dashboard data is exposed through `IBusDashboardDataService` (defined in `SimplyWorks.Bus.RabbitMqExtensions`, implemented and registered by `SimplyWorks.Bus`). Inject it directly to build your own custom dashboard, REST API, or health probe — no dependency on `SimplyWorks.Bus.RabbitMqViewer` needed. See [Building a Custom Dashboard](#building-a-custom-dashboard) for a complete guide.
 
 ```csharp
 public class OpsController : ControllerBase
@@ -532,7 +529,7 @@ public class OpsController : ControllerBase
 | `DeadLetterSummaryView` | Per-consumer DL count, last exception type/message, last failure timestamp |
 | `DashboardAlert` | `Severity` (`Info/Warning/Critical`), `Title`, `Detail`, `QueueName`, `ConsumerName`, `TimestampUtc` |
 
-**`OperationalEventFilter` fields** (all optional, string fields are case-insensitive substring match):
+**`OperationalEventFilter` fields** (all optional, string fields are case-insensitive substring matches):
 
 `ApplicationName`, `ConsumerName`, `MessageType`, `CorrelationId`, `TraceId`, `QueueName`, `EventName` (exact), `From`, `To`, `Limit` (default 200)
 
@@ -548,7 +545,6 @@ services.AddBus(config =>
     config.AlertRetryWarningThreshold       = 10;   // Warning when retry backlog ≥ N
     config.AlertRetryCriticalThreshold      = 100;  // Critical when retry backlog ≥ N
     config.AlertDeadLetterCriticalThreshold = 100;  // Critical when DL count ≥ N
-    // Any DL count > 0 always produces a Warning regardless of threshold
     config.QueueBackpressureThreshold       = 5000; // backpressure warning threshold
 });
 ```
@@ -563,7 +559,6 @@ public class MyAlertEvaluator : IAlertEvaluator
         var alerts = new List<DashboardAlert>();
         foreach (var c in consumers)
         {
-            // Zero tolerance for payment failures
             if (c.Name == "PaymentConsumer" && c.FailedCount > 0)
                 alerts.Add(new DashboardAlert(
                     AlertSeverity.Critical, "Payment Dead Letter",
@@ -581,10 +576,174 @@ services.AddBus(...);
 
 ---
 
+## Building a Custom Dashboard
+
+If you do not want to use `SimplyWorks.Bus.RabbitMqViewer` — e.g. you want React, Blazor, an existing admin framework, or a JSON API for a mobile app — everything you need is in `SimplyWorks.Bus.RabbitMqExtensions`. You **never** need to install the viewer package.
+
+### Package requirements
+
+```bash
+dotnet add package SimplyWorks.Bus                       # core runtime (always required)
+dotnet add package SimplyWorks.Bus.RabbitMqExtensions    # contracts + data service
+# SimplyWorks.Bus.RabbitMqViewer is NOT needed
+```
+
+### What the library provides
+
+All interfaces below are registered automatically by `services.AddBus(...)`. Just inject what you need.
+
+| Interface | Description |
+|---|---|
+| `IBusDashboardDataService` | Aggregate read layer — summary, consumer health, queues, retries, dead letters, alerts, events |
+| `IConsumerReader` | Raw per-consumer queue statistics from the RabbitMQ Management API (with configurable caching) |
+| `IErrorQueueReader` | Peek at messages in retry and dead-letter queues without removing them |
+| `IOperationalEventStore` | Query the in-memory event ring buffer with `OperationalEventFilter` |
+| `IAlertEvaluator` | Evaluate a `ConsumerHealthView[]` snapshot and return `DashboardAlert` objects |
+| `IOperationalEventBatchSink` | Implement to stream event batches to external systems (Elasticsearch, ClickHouse, etc.) |
+
+### Minimal REST API example (no viewer package)
+
+```csharp
+// Program.cs
+builder.Services.AddBus(config => { config.ApplicationName = "MyApp"; /* ... */ });
+builder.Services.AddBusPublish();
+builder.Services.AddBusConsume();
+
+var app = builder.Build();
+
+app.MapGet("/ops/summary",      async (IBusDashboardDataService d) => await d.GetSummaryAsync());
+app.MapGet("/ops/consumers",    async (IBusDashboardDataService d) => await d.GetConsumerHealthAsync());
+app.MapGet("/ops/queues",       async (IBusDashboardDataService d) => await d.GetQueueDetailsAsync());
+app.MapGet("/ops/retries",      async (IBusDashboardDataService d) => await d.GetRetryAnalysisAsync());
+app.MapGet("/ops/dead-letters", async (IBusDashboardDataService d) => await d.GetDeadLetterSummaryAsync());
+app.MapGet("/ops/alerts",       async (IBusDashboardDataService d) => await d.GetAlertsAsync());
+app.MapGet("/ops/events",       (IBusDashboardDataService d,
+                                  string? consumer, string? messageType,
+                                  string? eventName, int limit = 100) =>
+    d.GetRecentEvents(new OperationalEventFilter(
+        ConsumerName: consumer, MessageType: messageType,
+        EventName: eventName, Limit: limit)));
+
+app.Run();
+```
+
+### Querying the operational event store directly
+
+```csharp
+public class MyOpsService
+{
+    private readonly IOperationalEventStore _store;
+    public MyOpsService(IOperationalEventStore store) => _store = store;
+
+    public IReadOnlyList<IOperationalEvent> GetRecentFailures(int limit = 50) =>
+        _store.GetRecent(new OperationalEventFilter(
+            EventName: "MessageProcessingFailed",
+            Limit: limit));
+
+    public long TotalEventsSinceStartup => _store.TotalReceived;
+}
+```
+
+### Pattern matching on event records
+
+All events are strongly typed C# records inheriting from `OperationalEventBase`. Use pattern matching to extract type-specific fields:
+
+```csharp
+foreach (var evt in _store.GetRecent())
+{
+    switch (evt)
+    {
+        case MessageProcessingFailed f:
+            Console.WriteLine($"[FAIL]     {f.ConsumerName} — {f.ExceptionType}: {f.ExceptionMessage}");
+            break;
+        case MessageProcessingCompleted c:
+            Console.WriteLine($"[OK]       {c.ConsumerName} in {c.ProcessingDurationMs:F1} ms");
+            break;
+        case MessageRetryScheduled r:
+            Console.WriteLine($"[RETRY]    {r.ConsumerName} attempt {r.RetryCount}, {r.RemainingRetryCount} remaining");
+            break;
+        case MessageMovedToDeadLetter dl:
+            Console.WriteLine($"[DLQ]      {dl.ConsumerName} → {dl.DeadLetterRoutingKey}");
+            break;
+        case QueueBackpressureDetected bp:
+            Console.WriteLine($"[PRESSURE] {bp.QueueName} depth={bp.QueueDepth} threshold={bp.Threshold}");
+            break;
+        case ConsumerConnected cc:
+            Console.WriteLine($"[CONNECT]  {cc.ConsumerName} tag={cc.ConsumerTag}");
+            break;
+        case ConsumerDisconnected cd:
+            Console.WriteLine($"[DISCONN]  {cd.ConsumerName} reason={cd.Reason}");
+            break;
+        case PublishFailed pf:
+            Console.WriteLine($"[PUB FAIL] {pf.MessageType} — {pf.ExceptionType}");
+            break;
+    }
+}
+```
+
+### Replacing or extending the in-memory event store
+
+Register `IOperationalEventBatchSink` to stream events alongside the built-in ring buffer:
+
+```csharp
+public class ElasticsearchSink : IOperationalEventBatchSink
+{
+    public async Task PublishBatch(IReadOnlyList<IOperationalEvent> events,
+        CancellationToken cancellationToken = default)
+        => await _esClient.BulkAsync(events, cancellationToken);
+}
+
+services.AddSingleton<IOperationalEventBatchSink, ElasticsearchSink>();
+services.AddBus(...); // in-memory store and your sink both active
+```
+
+To **replace** query access with your own persistent store:
+
+```csharp
+public class ClickHouseEventStore : IOperationalEventStore, IOperationalEventBatchSink
+{
+    public long TotalReceived => /* query row count */;
+    public IReadOnlyList<IOperationalEvent> GetRecent(OperationalEventFilter? filter = null)
+        => /* translate filter → SQL → query */;
+    public async Task PublishBatch(IReadOnlyList<IOperationalEvent> events,
+        CancellationToken ct = default)
+        => await _clickHouse.BulkInsertAsync(events, ct);
+}
+
+// Register BEFORE AddBus() — TryAddSingleton means yours wins
+services.AddSingleton<ClickHouseEventStore>();
+services.AddSingleton<IOperationalEventStore>(sp => sp.GetRequiredService<ClickHouseEventStore>());
+services.AddSingleton<IOperationalEventBatchSink>(sp => sp.GetRequiredService<ClickHouseEventStore>());
+services.AddBus(...);
+```
+
+### Health probe using `ConsumerHealthView.HealthStatus`
+
+```csharp
+builder.Services.AddHealthChecks()
+    .AddAsyncCheck("bus-consumers", async (IBusDashboardDataService dash, ct) =>
+    {
+        var consumers    = await dash.GetConsumerHealthAsync(ct);
+        var disconnected = consumers.Where(c => c.TotalNodes == 0).ToList();
+        var critical     = consumers.Where(c => c.HealthStatus == AlertSeverity.Critical).ToList();
+
+        if (disconnected.Any())
+            return HealthCheckResult.Unhealthy(
+                $"{disconnected.Count} consumer(s) disconnected: " +
+                string.Join(", ", disconnected.Select(c => c.Name)));
+
+        if (critical.Any())
+            return HealthCheckResult.Degraded($"{critical.Count} consumer(s) in critical state.");
+
+        return HealthCheckResult.Healthy($"{consumers.Length} consumer(s) all healthy.");
+    });
+```
+
+---
+
 ## Operations Viewer Dashboard
 
-`SimplyWorks.Bus.RabbitMqViewer` adds a server-rendered dark-mode operations dashboard built on
-**Pico.css + HTMX**. No JavaScript framework required. All data auto-refreshes via HTMX polling.
+`SimplyWorks.Bus.RabbitMqViewer` adds a server-rendered operations dashboard built with **Pico.css + HTMX**. No JavaScript framework required. All tables auto-refresh via HTMX polling with CSS animations.
 
 ```bash
 dotnet add package SimplyWorks.Bus.RabbitMqViewer
@@ -595,16 +754,26 @@ dotnet add package SimplyWorks.Bus.RabbitMqViewer
 | Route | Content |
 |---|---|
 | `/bus-viewer` | **Overview** — summary cards, consumer health table, active alerts, live event feed |
-| `/bus-viewer/consumers` | **Consumer Health** — full sortable grid with status, rates, prefetch, priority |
+| `/bus-viewer/consumers` | **Consumer Health** — full grid with status badges, rates, prefetch, priority |
 | `/bus-viewer/queues` | **Queue Details** — main + retry + dead-letter depths and rates per queue |
 | `/bus-viewer/retries` | **Retry Analysis** — consumers with retry backlogs ordered by severity |
 | `/bus-viewer/dead-letters` | **Dead-Letter Inspection** — counts, last exception, last failure timestamp |
-| `/bus-viewer/events` | **Live Events** — filterable operational event stream with inline details |
+| `/bus-viewer/events` | **Live Events** — filterable operational event stream with inline exception details |
+| `/bus-viewer/login` | **Login page** — form-based credential entry (no browser credential caching) |
+| `/bus-viewer/logout` | **Logout** — clears session cookie and redirects to login |
+
+### UI features
+
+- 🌗 **Dark / Light mode toggle** — persisted in `localStorage`; theme restored before first paint to prevent flash
+- ⚠️ **Critical status tooltips** — hovering a "⚠ Critical" badge shows a bullet list of exactly why the consumer is critical (disconnected nodes, dead-letter count, retry count, backpressure, publish/ack imbalance)
+- ✨ **Live refresh animations** — a blue-purple shimmer bar sweeps the top edge of each table zone while loading; each `<tbody>` row slides up and fades in with a 60 ms stagger on data arrival
+- 🔴 **Pulsing live-data dot** — a green dot next to "Updated HH:mm:ss" confirms live polling is active
+- Data auto-refreshes: consumer/queue/retry tables every 10 s, events every 5 s, dead-letters every 15 s
 
 ### Registration
 
 ```csharp
-// Program.cs — call after AddBus()
+// Program.cs / Startup.ConfigureServices — call after AddBus()
 builder.Services.AddBusViewer(o => o.UseBasicAuth());
 ```
 
@@ -612,33 +781,29 @@ builder.Services.AddBusViewer(o => o.UseBasicAuth());
 // Middleware pipeline
 app.UseStaticFiles();       // serves /_content/SimplyWorks.Bus.RabbitMqViewer/bus-viewer.css
 app.UseRouting();
-app.UseAuthentication();    // required only for RequirePolicy() mode
+app.UseAuthentication();    // required for RequirePolicy() mode
 app.UseAuthorization();
 app.UseBusViewer();
 app.MapRazorPages();        // discovers BusViewer area automatically
 ```
 
+> **Note:** `UseBusViewer()` can be placed at any position in the pipeline. When `UseBasicAuth()` is active, an `IStartupFilter` automatically inserts the viewer's authentication gate at the very beginning of the pipeline — before `UseAuthorization` — so 403 errors from the host application's authorization policies can never block the viewer.
+
 ### Authentication
 
-#### Mode 1 — Decoupled / policy (recommended for production)
+#### Mode 1 — Form-based login (`UseBasicAuth()`)
 
-Delegates to the host's auth pipeline. Any scheme works (JWT, cookie, OIDC, Windows):
+Credentials are validated against `IConfiguration` at request time (supports secret rotation without restart). On success a short-lived **session cookie** is issued:
 
-```csharp
-builder.Services.AddAuthorization(o =>
-    o.AddPolicy("OpsOnly", p => p.RequireRole("ops")));
-
-builder.Services.AddBusViewer(o => o.RequirePolicy("OpsOnly"));
-```
-
-#### Mode 2 — Built-in HTTP Basic
-
-Credentials resolved from `IConfiguration` **at request time** — supports environment variable rotation without restart:
+- Cookie `.BusViewerAuth`, path-scoped to `/bus-viewer`, `HttpOnly`, `SameSite=Strict`
+- **Session-only**: deleted when the browser closes, 8-hour absolute maximum
+- No browser credential caching (unlike HTTP Basic auth browser dialogs)
+- Logout at `/bus-viewer/logout` clears the cookie immediately
 
 ```csharp
 builder.Services.AddBusViewer(o => o.UseBasicAuth(
     usernameConfigKey: "BusViewer:Username",   // default key
-    passwordConfigKey: "BusViewer:Password"));  // default key
+    passwordConfigKey: "BusViewer:Password")); // default key
 ```
 
 ```json
@@ -649,15 +814,26 @@ builder.Services.AddBusViewer(o => o.UseBasicAuth(
 
 Environment variable equivalents: `BusViewer__Username`, `BusViewer__Password`
 
+#### Mode 2 — Decoupled / policy (recommended for production)
+
+Delegates entirely to the host's authorization pipeline. Any scheme works (JWT, cookie, OIDC, Windows Auth):
+
+```csharp
+builder.Services.AddAuthorization(o =>
+    o.AddPolicy("OpsOnly", p => p.RequireRole("ops")));
+
+builder.Services.AddBusViewer(o => o.RequirePolicy("OpsOnly"));
+```
+
 #### Mode 3 — Anonymous (development only)
 
-Throws `InvalidOperationException` at startup when `IHostEnvironment.IsProduction()` is true, unless explicitly overridden:
+Throws `InvalidOperationException` at startup when `IHostEnvironment.IsProduction()` is true unless explicitly suppressed:
 
 ```csharp
 builder.Services.AddBusViewer(o =>
 {
     o.AllowAnonymous();
-    o.AllowAnonymousInProduction = true; // only if behind a proxy/network policy
+    o.AllowAnonymousInProduction = true; // only if behind proxy/network policy
 });
 ```
 
@@ -668,8 +844,8 @@ builder.Services.AddBusViewer(o =>
 | `Title` | `"SW.Bus Operations"` | Header title displayed in the sidebar |
 | `AuthMode` | `None` | Set via `RequirePolicy()`, `UseBasicAuth()`, or `AllowAnonymous()` |
 | `PolicyName` | `null` | Policy name used when `AuthMode = Policy` |
-| `UsernameConfigKey` | `"BusViewer:Username"` | Config key for Basic auth username |
-| `PasswordConfigKey` | `"BusViewer:Password"` | Config key for Basic auth password |
+| `UsernameConfigKey` | `"BusViewer:Username"` | Config key for the login username |
+| `PasswordConfigKey` | `"BusViewer:Password"` | Config key for the login password |
 | `AllowAnonymousInProduction` | `false` | Suppress production guard for anonymous mode |
 
 ---

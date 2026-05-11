@@ -57,7 +57,7 @@ namespace SW.Bus
 
             if (string.IsNullOrEmpty(busOptions.ManagementUrl))
             {
-                busOptions.ManagementUrl = $"https://{factory.HostName}";
+                busOptions.ManagementUrl = $"http://{factory.HostName}:15672";
             }
             if (string.IsNullOrEmpty(busOptions.ManagementUsername))
             {

@@ -5,11 +5,12 @@
 <head>
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
-    <meta name="color-scheme" content="dark"/>
     <title>@ViewerOptions.Title — @ViewData["Title"]</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@@picocss/pico@@2/css/pico.slate.min.css"/>
-    <link rel="stylesheet" href="/_content/SimplyWorks.Bus.RabbitMqViewer/bus-viewer.css"/>
-    <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+    <!-- ?v=3 busts any browser cache of the old CSS -->
+    <link rel="stylesheet" href="/_content/SimplyWorks.Bus.RabbitMqViewer/bus-viewer.css?v=3"/>
+    <!-- Restore theme preference before first paint to avoid flash -->
+    <script>(function(){var t=localStorage.getItem('bv-theme');if(t)document.documentElement.setAttribute('data-theme',t);})()</script>
 </head>
 <body>
 
@@ -63,6 +64,10 @@
                     <span class="bv-muted">@BusOptions.ApplicationName</span>
                 }
             </small>
+            @if (ViewerOptions.AuthMode == SW.Bus.RabbitMqViewer.ViewerAuthMode.Basic)
+            {
+                <a href="/bus-viewer/logout" class="bv-logout-link" title="Sign out">⏻ Sign out</a>
+            }
         </div>
     </nav>
 
@@ -74,11 +79,16 @@
             <h1 class="bv-page-title">@ViewData["Title"]</h1>
             <div class="bv-topbar-right">
                 <div id="bv-alert-banner"
+                     class="bv-table-zone"
                      hx-get="/bus-viewer/partials/alerts"
                      hx-trigger="load, every 15s"
-                     hx-swap="innerHTML">
+                     hx-swap="innerHTML"
+                     hx-on::after-swap="bvOnSwap(this)">
                 </div>
-                <small class="bv-muted" id="bv-last-refresh">Refreshing…</small>
+                <small class="bv-muted" id="bv-last-refresh">
+                    <span class="bv-live-dot" title="Live data"></span>Refreshing…
+                </small>
+                <button class="bv-theme-toggle" id="bv-theme-toggle" onclick="bvToggleTheme()" title="Toggle light/dark mode">☀ Light</button>
             </div>
         </header>
 
@@ -91,11 +101,87 @@
 
 </div><!-- /.bv-shell -->
 
+<!--
+    HTMX loaded synchronously at end of body (no defer/async).
+    This guarantees it is fully initialised before the inline script below runs,
+    so document-level htmx:* event listeners attach at the right time.
+-->
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
 <script>
-    // Update "Last refreshed" timestamp after every HTMX swap
-    document.addEventListener('htmx:afterSwap', function () {
-        const el = document.getElementById('bv-last-refresh');
-        if (el) el.textContent = 'Updated ' + new Date().toLocaleTimeString();
+    /* ── Theme toggle ─────────────────────────────────────────────── */
+    function bvToggleTheme() {
+        var cur  = document.documentElement.getAttribute('data-theme');
+        var next = cur === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('bv-theme', next);
+        bvUpdateThemeBtn(next);
+    }
+    function bvUpdateThemeBtn(theme) {
+        var btn = document.getElementById('bv-theme-toggle');
+        if (!btn) return;
+        btn.textContent = theme === 'dark' ? '☀ Light' : '☾ Dark';
+        btn.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+    }
+    (function () { bvUpdateThemeBtn(document.documentElement.getAttribute('data-theme') || 'dark'); })();
+
+    /* ── Refresh animation ────────────────────────────────────────── */
+    // Called from hx-on::after-swap on every polling div AND from the
+    // document-level htmx:afterSwap listener below (belt AND braces).
+    var BV_MIN_SHIMMER_MS = 500;
+
+    function bvOnSwap(elt) {
+        // 1. Set per-row animation delays BEFORE adding the trigger class.
+        //    New rows are brand-new DOM nodes — no animation has started yet.
+        var rows = elt.querySelectorAll('tbody tr');
+        rows.forEach(function (row, i) {
+            row.style.animationDelay = (i * 60) + 'ms';
+        });
+        var cards = elt.querySelectorAll('.bv-card');
+        cards.forEach(function (card, i) {
+            card.style.animationDelay = (i * 50) + 'ms';
+        });
+
+        // 2. Reset then re-apply animation class so keyframes always replay.
+        elt.classList.remove('bv-just-updated');
+        void elt.offsetWidth;           // force reflow — essential to restart CSS animation
+        elt.classList.add('bv-just-updated');
+
+        // 3. Keep the shimmer bar (bv-loading) visible for at least BV_MIN_SHIMMER_MS.
+        //    HTMX's own .htmx-request class shows the bar while the request is in flight;
+        //    bv-loading extends it artificially so it's visible even on fast localhost.
+        var start = elt._bvStart || Date.now();
+        var remaining = Math.max(0, BV_MIN_SHIMMER_MS - (Date.now() - start));
+        setTimeout(function () { elt.classList.remove('bv-loading'); }, remaining);
+
+        // 4. Flash the topbar "last refreshed" timestamp.
+        var ts = document.getElementById('bv-last-refresh');
+        if (ts) {
+            ts.classList.remove('bv-refresh-flash');
+            void ts.offsetWidth;
+            ts.innerHTML = '<span class="bv-live-dot" title="Live data"></span>Updated ' + new Date().toLocaleTimeString();
+            ts.classList.add('bv-refresh-flash');
+        }
+    }
+
+    // Document-level backup (fires for any htmx element, not just ones with hx-on)
+    document.addEventListener('htmx:beforeRequest', function (evt) {
+        var t = evt.detail.target;
+        if (t && t.classList.contains('bv-table-zone')) {
+            t.classList.add('bv-loading');
+            t._bvStart = Date.now();
+        }
+    });
+    document.addEventListener('htmx:afterSwap', function (evt) {
+        var t = evt.detail.target;
+        if (t && t.classList.contains('bv-table-zone')) {
+            bvOnSwap(t);
+        }
+    });
+    ['htmx:responseError', 'htmx:sendError'].forEach(function (n) {
+        document.addEventListener(n, function (evt) {
+            var t = evt.detail && evt.detail.target;
+            if (t) t.classList.remove('bv-loading');
+        });
     });
 </script>
 
@@ -106,4 +192,3 @@
     private string NavClass(string page) =>
         ViewData["ActivePage"]?.ToString() == page ? "bv-nav-active" : string.Empty;
 }
-

@@ -1,6 +1,9 @@
 using System;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using SW.Bus.RabbitMqExtensions;
@@ -14,24 +17,15 @@ namespace SW.Bus.RabbitMqViewer;
 public static class BusViewerExtensions
 {
     /// <summary>
+    /// The authentication scheme name used by the viewer's own session cookie.
+    /// Separate from the host application's auth scheme so the two never interfere.
+    /// </summary>
+    public const string CookieSchemeName = "BusViewerCookie";
+
+    /// <summary>
     /// Registers all services required by the SW.Bus operations viewer dashboard.
     /// Call this in <c>Program.cs</c> / <c>Startup.ConfigureServices</c> after <c>AddBus()</c>.
     /// </summary>
-    /// <param name="services">The <see cref="IServiceCollection"/> to add services to.</param>
-    /// <param name="configure">Optional action to configure <see cref="ViewerOptions"/>.</param>
-    /// <returns>The <see cref="IServiceCollection"/> for chaining.</returns>
-    /// <example>
-    /// <code>
-    /// // Decoupled auth — host owns the auth scheme
-    /// services.AddBusViewer(o => o.RequirePolicy("OpsOnly"));
-    ///
-    /// // Built-in Basic auth from configuration
-    /// services.AddBusViewer(o => o.UseBasicAuth());
-    ///
-    /// // No auth (development only)
-    /// services.AddBusViewer(o => o.AllowAnonymous());
-    /// </code>
-    /// </example>
     public static IServiceCollection AddBusViewer(
         this IServiceCollection services,
         Action<ViewerOptions>? configure = null)
@@ -53,6 +47,31 @@ public static class BusViewerExtensions
                 "or explicitly set options.AllowAnonymousInProduction = true to suppress this check.");
         }
 
+        // Register the viewer's own session cookie scheme — isolated from the host app's auth
+        if (options.AuthMode == ViewerAuthMode.Basic)
+        {
+            // BusViewerStartupFilter inserts our middleware at the very front of the ASP.NET
+            // pipeline (before UseAuthentication / UseAuthorization) so unauthenticated
+            // /bus-viewer requests are redirected to login before anything can return 403.
+            services.AddSingleton<IStartupFilter>(new BusViewerStartupFilter(options));
+
+            services.AddAuthentication()
+                .AddCookie(CookieSchemeName, o =>
+                {
+                    o.Cookie.Name     = ".BusViewerAuth";
+                    o.Cookie.Path     = "/bus-viewer";
+                    o.Cookie.HttpOnly = true;
+                    o.Cookie.SameSite = SameSiteMode.Strict;
+                    o.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+                    // Session-only cookie: no persistent storage, 8-hour absolute limit
+                    o.ExpireTimeSpan    = TimeSpan.FromHours(8);
+                    o.SlidingExpiration = false;
+                    // Suppress the default redirect behaviour — BusViewerStartupFilter handles navigation
+                    o.Events.OnRedirectToLogin        = ctx => { ctx.Response.StatusCode = 401; return Task.CompletedTask; };
+                    o.Events.OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = 403; return Task.CompletedTask; };
+                });
+        }
+
         // Register Razor Pages and apply auth conventions for the BusViewer area
         services.AddRazorPages(o =>
         {
@@ -63,10 +82,10 @@ public static class BusViewerExtensions
                     break;
 
                 case ViewerAuthMode.Basic:
-                    // Enforced at page level by BasicAuthFilter (applied via convention below)
+                    // ViewerAuthFilter does the cookie check and redirects to /bus-viewer/login
                     o.Conventions.AddAreaFolderApplicationModelConvention(
                         "BusViewer", "/",
-                        model => model.Filters.Add(new BasicAuthFilter(options)));
+                        model => model.Filters.Add(new ViewerAuthFilter(options)));
                     o.Conventions.AllowAnonymousToAreaFolder("BusViewer", "/");
                     break;
 
@@ -81,22 +100,7 @@ public static class BusViewerExtensions
 
     /// <summary>
     /// Maps the SW.Bus operations viewer dashboard Razor Pages.
-    /// Call this in <c>Program.cs</c> <c>app.MapRazorPages()</c> is already present, this
-    /// adds no extra mapping — the pages are discovered automatically from the RCL.
-    /// Use this overload to document intent and ensure static files are served.
     /// </summary>
-    /// <param name="app">The <see cref="IApplicationBuilder"/>.</param>
-    /// <returns>The <see cref="IApplicationBuilder"/> for chaining.</returns>
-    /// <example>
-    /// <code>
-    /// app.UseStaticFiles();   // Required — serves /_content/SimplyWorks.Bus.RabbitMqViewer/ assets
-    /// app.UseRouting();
-    /// app.UseAuthentication();
-    /// app.UseAuthorization();
-    /// app.UseBusViewer();     // Dashboard at /bus-viewer
-    /// app.MapRazorPages();
-    /// </code>
-    /// </example>
     public static IApplicationBuilder UseBusViewer(this IApplicationBuilder app) => app;
 }
 

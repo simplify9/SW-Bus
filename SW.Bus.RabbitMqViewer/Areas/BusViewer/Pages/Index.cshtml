@@ -1,4 +1,5 @@
 @page "/bus-viewer"
+@attribute [AllowAnonymous]
 @using SW.Bus.RabbitMqExtensions
 @inject IBusDashboardDataService DataService
 @{
@@ -58,10 +59,15 @@
 <section class="bv-section">
     <h2>Consumer Health</h2>
     <div id="bv-consumer-table"
+         class="bv-table-zone"
          hx-get="/bus-viewer/partials/consumers"
          hx-trigger="load, every 10s"
-         hx-swap="innerHTML">
-        <p aria-busy="true">Loading…</p>
+         hx-swap="innerHTML"
+         hx-on::after-swap="bvOnSwap(this)">
+        <div class="bv-init-loader">
+            <div class="bv-spinner"></div>
+            <span>Loading consumer health…</span>
+        </div>
     </div>
 </section>
 
@@ -102,10 +108,15 @@
 <section class="bv-section">
     <h2>Live Activity <small class="bv-muted">(last 20 events)</small></h2>
     <div id="bv-event-feed"
+         class="bv-table-zone"
          hx-get="/bus-viewer/partials/events?limit=20"
          hx-trigger="load, every 5s"
-         hx-swap="innerHTML">
-        <p aria-busy="true">Loading…</p>
+         hx-swap="innerHTML"
+         hx-on::after-swap="bvOnSwap(this)">
+        <div class="bv-init-loader">
+            <div class="bv-spinner"></div>
+            <span>Loading live activity…</span>
+        </div>
     </div>
 </section>
 

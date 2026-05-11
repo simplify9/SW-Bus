@@ -1,24 +1,23 @@
 using System;
-using System.Text;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
-using Microsoft.Extensions.Configuration;
 
 namespace SW.Bus.RabbitMqViewer.Auth;
 
 /// <summary>
-/// ASP.NET Core page filter that enforces HTTP Basic authentication for all
-/// viewer dashboard Razor Pages when <see cref="ViewerAuthMode.Basic"/> is active.
-/// Credentials are resolved from <see cref="IConfiguration"/> at request-time,
-/// enabling rotation without restart.
+/// Page filter that enforces form-based session authentication for the Bus Viewer dashboard.
+/// Checks for a valid viewer session cookie (see <see cref="BusViewerExtensions.CookieSchemeName"/>).
+/// Unauthenticated full-page requests are redirected to /bus-viewer/login.
+/// Unauthenticated HTMX partial requests receive HX-Redirect so the whole page navigates to login.
+/// All viewer responses are sent with Cache-Control: no-store to prevent credential caching.
 /// </summary>
-internal sealed class BasicAuthFilter : IAsyncPageFilter
+internal sealed class ViewerAuthFilter : IAsyncPageFilter
 {
     private readonly ViewerOptions options;
 
-    public BasicAuthFilter(ViewerOptions options) => this.options = options;
+    public ViewerAuthFilter(ViewerOptions options) => this.options = options;
 
     public Task OnPageHandlerSelectionAsync(PageHandlerSelectedContext context) => Task.CompletedTask;
 
@@ -32,58 +31,38 @@ internal sealed class BasicAuthFilter : IAsyncPageFilter
             return;
         }
 
-        var config   = context.HttpContext.RequestServices.GetService(typeof(IConfiguration)) as IConfiguration;
-        var expected = GetExpected(config);
-
-        var authHeader = context.HttpContext.Request.Headers.Authorization.ToString();
-
-        if (IsAuthorized(authHeader, expected))
+        // Never apply auth to the login / logout pages — that would be an infinite redirect loop
+        var path = context.HttpContext.Request.Path.Value ?? string.Empty;
+        if (path.StartsWith("/bus-viewer/login",  StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/bus-viewer/logout", StringComparison.OrdinalIgnoreCase))
         {
             await next();
             return;
         }
 
-        context.HttpContext.Response.Headers["WWW-Authenticate"] = "Basic realm=\"SW.Bus Viewer\"";
-        context.Result = new UnauthorizedResult();
-    }
+        // Suppress all browser and proxy caching for viewer responses
+        context.HttpContext.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+        context.HttpContext.Response.Headers.Pragma       = "no-cache";
 
-    private (string Username, string Password) GetExpected(IConfiguration? config)
-    {
-        var user = config?[options.UsernameConfigKey] ?? string.Empty;
-        var pass = config?[options.PasswordConfigKey] ?? string.Empty;
-        return (user, pass);
-    }
-
-    private static bool IsAuthorized(string authHeader, (string Username, string Password) expected)
-    {
-        if (string.IsNullOrWhiteSpace(authHeader) || !authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        try
+        // Validate the viewer session cookie
+        var authResult = await context.HttpContext.AuthenticateAsync(BusViewerExtensions.CookieSchemeName);
+        if (authResult.Succeeded)
         {
-            var encoded  = authHeader["Basic ".Length..].Trim();
-            var decoded  = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
-            var colonIdx = decoded.IndexOf(':');
-            if (colonIdx <= 0) return false;
-
-            var user = decoded[..colonIdx];
-            var pass = decoded[(colonIdx + 1)..];
-
-            // Constant-time comparison to avoid timing attacks
-            return SlowEquals(user, expected.Username) && SlowEquals(pass, expected.Password);
+            await next();
+            return;
         }
-        catch
+
+        // HTMX partial request — return HX-Redirect so the whole page navigates to login
+        if (context.HttpContext.Request.Headers.ContainsKey("HX-Request"))
         {
-            return false;
+            context.HttpContext.Response.Headers["HX-Redirect"] = "/bus-viewer/login";
+            context.Result = new StatusCodeResult(401);
         }
-    }
-
-    private static bool SlowEquals(string a, string b)
-    {
-        var diff = a.Length ^ b.Length;
-        for (var i = 0; i < a.Length && i < b.Length; i++)
-            diff |= a[i] ^ b[i];
-        return diff == 0;
+        else
+        {
+            var returnUrl = Uri.EscapeDataString(path + context.HttpContext.Request.QueryString);
+            context.Result = new RedirectResult($"/bus-viewer/login?returnUrl={returnUrl}");
+        }
     }
 }
 

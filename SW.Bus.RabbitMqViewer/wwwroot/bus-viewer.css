@@ -1,7 +1,6 @@
 /* ══════════════════════════════════════════════════════════════════════════
-   SW.Bus RabbitMq Viewer — dark-mode operations dashboard stylesheet
-   Layered on top of Pico.css (slate theme). Overrides use --pico-* tokens
-   where possible so the host's Pico customisation flows through.
+   SW.Bus RabbitMq Viewer — operations dashboard stylesheet
+   Layered on top of Pico.css (slate theme). Supports dark & light modes.
    ══════════════════════════════════════════════════════════════════════════ */
 
 :root {
@@ -19,12 +18,36 @@
     --bv-topbar-h:     56px;
     --bv-border-r:     6px;
     --bv-font-mono:    'JetBrains Mono', 'Cascadia Code', 'Fira Code', ui-monospace, monospace;
+    /* tooltip */
+    --bv-tooltip-bg:   #1c2128;
+    --bv-tooltip-text: #c9d1d9;
+    --bv-tooltip-border: #30363d;
 }
 
 /* ── Reset / base ────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 
 html[data-theme="dark"] {
+    --pico-background-color: var(--bv-bg);
+    background-color: var(--bv-bg);
+    color: var(--bv-text);
+}
+
+/* ── Light mode overrides ────────────────────────────────────────────── */
+html[data-theme="light"] {
+    --bv-bg:           #f6f8fa;
+    --bv-surface:      #ffffff;
+    --bv-surface-2:    #eaeef2;
+    --bv-border:       #d0d7de;
+    --bv-text:         #1f2328;
+    --bv-muted:        #656d76;
+    --bv-primary:      #0969da;
+    --bv-ok:           #1a7f37;
+    --bv-warning:      #9a6700;
+    --bv-critical:     #cf222e;
+    --bv-tooltip-bg:   #ffffff;
+    --bv-tooltip-text: #1f2328;
+    --bv-tooltip-border: #d0d7de;
     --pico-background-color: var(--bv-bg);
     background-color: var(--bv-bg);
     color: var(--bv-text);
@@ -364,7 +387,115 @@ html[data-theme="dark"] {
     overflow-x: auto;
 }
 
-/* ── Responsive: collapse sidebar on small screens ───────────────────── */
+/* ── Login page ──────────────────────────────────────────────────────── */
+.bv-login-wrap {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bv-bg);
+    padding: 1.5rem;
+}
+
+.bv-login-card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--bv-surface);
+    border: 1px solid var(--bv-border);
+    border-radius: 10px;
+    padding: 2rem 2rem 1.75rem;
+    box-shadow: 0 8px 32px rgba(0,0,0,.35);
+}
+
+.bv-login-logo {
+    justify-content: center;
+    border-bottom: none;
+    margin-bottom: .5rem;
+}
+
+.bv-login-subtitle {
+    text-align: center;
+    font-size: .82rem;
+    margin-bottom: 1.5rem;
+}
+
+.bv-login-field {
+    margin-bottom: 1rem;
+}
+
+.bv-login-label {
+    display: block;
+    font-size: .78rem;
+    font-weight: 600;
+    color: var(--bv-muted);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin-bottom: .35rem;
+}
+
+.bv-login-input {
+    width: 100%;
+    background: var(--bv-bg);
+    border: 1px solid var(--bv-border);
+    border-radius: 5px;
+    color: var(--bv-text);
+    padding: .5rem .75rem;
+    font-size: .9rem;
+    transition: border-color .12s, box-shadow .12s;
+}
+
+.bv-login-input:focus {
+    outline: none;
+    border-color: var(--bv-primary);
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, .15);
+}
+
+html[data-theme="light"] .bv-login-input:focus {
+    box-shadow: 0 0 0 3px rgba(9, 105, 218, .15);
+}
+
+.bv-login-submit {
+    width: 100%;
+    justify-content: center;
+    height: auto;
+    padding: .6rem;
+    margin-top: .5rem;
+    font-size: .9rem;
+}
+
+.bv-login-error {
+    background: rgba(248, 81, 73, .12);
+    border: 1px solid rgba(248, 81, 73, .3);
+    border-radius: 5px;
+    color: var(--bv-critical);
+    font-size: .82rem;
+    padding: .5rem .75rem;
+    margin-bottom: 1rem;
+}
+
+html[data-theme="light"] .bv-login-error {
+    background: rgba(207, 34, 46, .08);
+    border-color: rgba(207, 34, 46, .25);
+}
+
+/* ── Logout link in sidebar ──────────────────────────────────────────── */
+.bv-logout-link {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    margin-top: .65rem;
+    font-size: .78rem;
+    color: var(--bv-muted);
+    text-decoration: none;
+    opacity: .75;
+    transition: color .12s, opacity .12s;
+}
+
+.bv-logout-link:hover {
+    color: var(--bv-critical);
+    opacity: 1;
+}
+
 @media (max-width: 768px) {
     .bv-shell {
         grid-template-columns: 1fr;
@@ -379,4 +510,244 @@ html[data-theme="dark"] {
         grid-template-columns: repeat(2, 1fr);
     }
 }
+
+/* ── Light-mode surface / element corrections ────────────────────────── */
+html[data-theme="light"] .bv-shell,
+html[data-theme="light"] .bv-content { background: var(--bv-bg); }
+
+html[data-theme="light"] .bv-sidebar,
+html[data-theme="light"] .bv-topbar,
+html[data-theme="light"] .bv-card,
+html[data-theme="light"] .bv-filter-bar { background: var(--bv-surface); }
+
+html[data-theme="light"] .bv-table th { background: var(--bv-surface-2); }
+
+html[data-theme="light"] .bv-table tr:hover td { background: rgba(0,0,0,.03); }
+
+html[data-theme="light"] .bv-filter-input,
+html[data-theme="light"] .bv-filter-select {
+    background: var(--bv-bg);
+    color: var(--bv-text);
+    border-color: var(--bv-border);
+}
+
+html[data-theme="light"] .bv-btn { color: #ffffff; }
+html[data-theme="light"] .bv-btn--secondary { color: var(--bv-text); }
+
+html[data-theme="light"] .bv-badge--info     { background: rgba(9,105,218,.1);  color: var(--bv-primary); }
+html[data-theme="light"] .bv-badge--warning  { background: rgba(154,103,0,.12); color: var(--bv-warning); }
+html[data-theme="light"] .bv-badge--critical { background: rgba(207,34,46,.12); color: var(--bv-critical); }
+html[data-theme="light"] .bv-badge-env       { background: rgba(26,127,55,.1);  color: var(--bv-ok); }
+
+html[data-theme="light"] .bv-alert-pill--critical { background: rgba(207,34,46,.12); color: var(--bv-critical); }
+html[data-theme="light"] .bv-alert-pill--warning  { background: rgba(154,103,0,.12); color: var(--bv-warning); }
+
+html[data-theme="light"] .bv-event-name--info     { background: rgba(9,105,218,.08);  color: var(--bv-primary); }
+html[data-theme="light"] .bv-event-name--warning  { background: rgba(154,103,0,.10);  color: var(--bv-warning); }
+html[data-theme="light"] .bv-event-name--critical { background: rgba(207,34,46,.10);  color: var(--bv-critical); }
+
+html[data-theme="light"] .bv-nav-active a {
+    background: rgba(9,105,218,.1);
+    color: var(--bv-primary) !important;
+    border-left-color: var(--bv-primary);
+}
+
+html[data-theme="light"] .bv-row--critical { background: rgba(207,34,46,.05); }
+html[data-theme="light"] .bv-row--critical:hover td { background: rgba(207,34,46,.09) !important; }
+html[data-theme="light"] .bv-row--warning  { background: rgba(154,103,0,.05); }
+html[data-theme="light"] .bv-row--warning:hover td { background: rgba(154,103,0,.09) !important; }
+
+/* ── Theme toggle button ─────────────────────────────────────────────── */
+.bv-theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    padding: .3rem .7rem;
+    border-radius: 20px;
+    font-size: .78rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--bv-border);
+    background: var(--bv-surface-2);
+    color: var(--bv-text);
+    height: 30px;
+    transition: background .15s, border-color .15s;
+    user-select: none;
+}
+.bv-theme-toggle:hover {
+    background: var(--bv-border);
+}
+
+/* ── Critical status tooltip ─────────────────────────────────────────── */
+[data-bv-tooltip] {
+    position: relative;
+    cursor: help;
+}
+[data-bv-tooltip]::after {
+    content: attr(data-bv-tooltip);
+    position: absolute;
+    bottom: calc(100% + 7px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bv-tooltip-bg);
+    color: var(--bv-tooltip-text);
+    border: 1px solid var(--bv-tooltip-border);
+    padding: .4rem .65rem;
+    border-radius: 5px;
+    font-size: .72rem;
+    font-weight: 400;
+    line-height: 1.45;
+    white-space: normal;
+    min-width: 160px;
+    max-width: 280px;
+    text-align: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .15s ease;
+    z-index: 200;
+    box-shadow: 0 4px 12px rgba(0,0,0,.3);
+}
+[data-bv-tooltip]::before {
+    content: '';
+    position: absolute;
+    bottom: calc(100% + 1px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: var(--bv-tooltip-border);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .15s ease;
+    z-index: 201;
+}
+[data-bv-tooltip]:hover::after,
+[data-bv-tooltip]:hover::before {
+    opacity: 1;
+}
+
+/* ── Data-refresh animations ─────────────────────────────────────────── */
+
+/* CSS spinner — shown while a table zone is loading for the first time */
+@keyframes bv-spin {
+    to { transform: rotate(360deg); }
+}
+
+.bv-spinner {
+    width: 22px;
+    height: 22px;
+    border: 2.5px solid var(--bv-border);
+    border-top-color: var(--bv-primary);
+    border-radius: 50%;
+    animation: bv-spin .65s linear infinite;
+    flex-shrink: 0;
+}
+
+.bv-init-loader {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    padding: 2rem 1.25rem;
+    color: var(--bv-muted);
+    font-size: .85rem;
+}
+
+/* Table zone wrapper — hosts the progress bar + row animations */
+.bv-table-zone {
+    position: relative;
+}
+
+/* ── Loading shimmer bar ─────────────────────────────────────────────── */
+/* This sits at the very top edge of the table zone and sweeps left→right
+   while an HTMX request is in flight (kept visible for ≥ 450 ms via JS).  */
+.bv-table-zone::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(
+        90deg,
+        transparent   0%,
+        var(--bv-primary) 35%,
+        #a78bfa       55%,
+        transparent   100%
+    );
+    background-size: 300% 100%;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 20;
+    border-radius: 2px;
+    transition: opacity .15s ease;
+}
+
+.bv-table-zone.bv-loading::before,
+.bv-table-zone.htmx-request::before {
+    opacity: 1;
+    animation: bv-shimmer-scan .85s ease-in-out infinite;
+}
+
+@keyframes bv-shimmer-scan {
+    0%   { background-position:  100% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* Dim table content while the request is in flight */
+.bv-table-zone.bv-loading > *:not(.bv-init-loader),
+.bv-table-zone.htmx-request > *:not(.bv-init-loader) {
+    opacity: .55;
+    transition: opacity .15s ease;
+}
+
+/* ── Row stagger animation fired after each data swap ────────────────── */
+/* IMPORTANT: animation-delay is set inline per-row via JS
+   *before* this class is added, so the stagger is guaranteed correct.   */
+@keyframes bv-row-appear {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.bv-just-updated tbody tr {
+    animation: bv-row-appear .38s ease both;
+}
+
+/* Card grid items on the overview page */
+@keyframes bv-card-appear {
+    from { opacity: 0; transform: translateY(8px) scale(.97); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.bv-just-updated .bv-card {
+    animation: bv-card-appear .32s ease both;
+}
+
+/* ── Timestamp flash ─────────────────────────────────────────────────── */
+@keyframes bv-timestamp-flash {
+    0%   { color: var(--bv-primary); }
+    100% { color: var(--bv-muted); }
+}
+
+.bv-refresh-flash {
+    animation: bv-timestamp-flash 1.2s ease forwards;
+}
+
+/* ── Pulsing live-data dot ───────────────────────────────────────��───── */
+.bv-live-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--bv-ok);
+    margin-right: .35rem;
+    vertical-align: middle;
+    animation: bv-live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes bv-live-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: .45; transform: scale(.7); }
+}
+
+
+
 

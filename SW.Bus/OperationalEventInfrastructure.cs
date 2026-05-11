@@ -81,29 +81,51 @@ internal sealed class OperationalEventDispatcher : BackgroundService
         if (!busOptions.OperationalEventsEnabled)
             return;
 
-        var reader = buffer.Buffer.Reader;
+        var reader        = buffer.Buffer.Reader;
         var flushInterval = TimeSpan.FromMilliseconds(busOptions.OperationalEventsFlushIntervalMs);
-        var timer = new PeriodicTimer(flushInterval);
-        var batch = new List<IOperationalEvent>(busOptions.OperationalEventsBatchSize);
+        var batch         = new List<IOperationalEvent>(busOptions.OperationalEventsBatchSize);
+
+        // NOTE: PeriodicTimer.WaitForNextTickAsync only supports one outstanding
+        // call at a time and throws InvalidOperationException if called concurrently.
+        // The old Task.WhenAny pattern left the previous timer awaitable dangling on
+        // each loop iteration, crashing the dispatcher. We replace it with a linked
+        // CancellationTokenSource that times out after flushInterval — one token, zero
+        // concurrent-call issues, and the same flush-on-idle semantics.
 
         try
         {
             while (!stoppingToken.IsCancellationRequested)
             {
+                // 1. Drain into the batch (non-blocking fast path)
                 while (batch.Count < busOptions.OperationalEventsBatchSize && reader.TryRead(out var evt))
                     batch.Add(evt);
 
+                // 2. If the batch is full, flush immediately and loop
                 if (batch.Count >= busOptions.OperationalEventsBatchSize)
                 {
                     await FlushBatch(batch, stoppingToken);
                     continue;
                 }
 
-                var waitReadTask = reader.WaitToReadAsync(stoppingToken).AsTask();
-                var tickTask = timer.WaitForNextTickAsync(stoppingToken).AsTask();
-                var completedTask = await Task.WhenAny(waitReadTask, tickTask);
+                // 3. Wait for either more data OR the flush interval to elapse
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                timeoutCts.CancelAfter(flushInterval);
 
-                if (completedTask == tickTask && batch.Count > 0)
+                try
+                {
+                    // Blocks until data is available or the timeout fires
+                    await reader.WaitToReadAsync(timeoutCts.Token);
+                }
+                catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+                {
+                    // Flush interval elapsed — fall through to drain + flush below
+                }
+
+                // 4. One final drain after either condition
+                while (batch.Count < busOptions.OperationalEventsBatchSize && reader.TryRead(out var evt2))
+                    batch.Add(evt2);
+
+                if (batch.Count > 0)
                     await FlushBatch(batch, stoppingToken);
             }
         }
@@ -113,7 +135,7 @@ internal sealed class OperationalEventDispatcher : BackgroundService
         }
         finally
         {
-            timer.Dispose();
+            // Drain any remaining events on shutdown
             while (reader.TryRead(out var pending))
                 batch.Add(pending);
             if (batch.Count > 0)
