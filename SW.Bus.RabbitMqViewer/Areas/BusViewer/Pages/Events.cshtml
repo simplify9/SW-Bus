@@ -32,7 +32,8 @@
 @{
     var qs = new System.Text.StringBuilder("/bus-viewer/partials/events?limit=100");
     foreach (var kv in Request.Query)
-        qs.Append($"&{kv.Key}={Uri.EscapeDataString(kv.Value!)}");
+        if (!string.IsNullOrEmpty(kv.Value))
+            qs.Append($"&{kv.Key}={Uri.EscapeDataString(kv.Value!)}");
 }
 
 <div id="bv-event-feed"

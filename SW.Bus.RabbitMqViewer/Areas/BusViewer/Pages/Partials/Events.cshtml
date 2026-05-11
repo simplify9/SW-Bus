@@ -6,6 +6,7 @@
 @{
     int.TryParse(Request.Query["limit"], out var limit);
     if (limit <= 0) limit = 100;
+    limit = Math.Min(limit, 1000); // cap at 1 000 to prevent runaway allocations
 
     var filter = new OperationalEventFilter(
         ConsumerName:  string.IsNullOrWhiteSpace(Request.Query["consumer"])      ? null : (string)Request.Query["consumer"]!,
