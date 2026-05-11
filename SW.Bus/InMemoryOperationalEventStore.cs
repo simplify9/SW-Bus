@@ -67,38 +67,26 @@ internal sealed class InMemoryOperationalEventStore : IOperationalEventBatchSink
         if (filter == null) return true;
         if (evt is not OperationalEventBase b) return true;
 
-        if (filter.ApplicationName != null &&
-            !b.ApplicationName.Contains(filter.ApplicationName, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (filter.ConsumerName != null &&
-            !b.ConsumerName.Contains(filter.ConsumerName, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (filter.MessageType != null &&
-            !b.MessageType.Contains(filter.MessageType, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (filter.CorrelationId != null &&
-            !b.CorrelationId.Contains(filter.CorrelationId, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (filter.TraceId != null &&
-            !b.TraceId.Contains(filter.TraceId, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (filter.QueueName != null &&
-            !b.QueueName.Contains(filter.QueueName, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (filter.EventName != null &&
-            !b.EventName.Equals(filter.EventName, StringComparison.OrdinalIgnoreCase))
-            return false;
+        if (filter.ApplicationName != null && !ContainsCI(b.ApplicationName, filter.ApplicationName)) return false;
+        if (filter.ConsumerName    != null && !ContainsCI(b.ConsumerName,    filter.ConsumerName))    return false;
+        if (filter.MessageType     != null && !ContainsCI(b.MessageType,     filter.MessageType))     return false;
+        if (filter.CorrelationId   != null && !ContainsCI(b.CorrelationId,   filter.CorrelationId))   return false;
+        if (filter.TraceId         != null && !ContainsCI(b.TraceId,         filter.TraceId))         return false;
+        if (filter.QueueName       != null && !ContainsCI(b.QueueName,       filter.QueueName))       return false;
+        if (filter.EventName       != null && !EqualsCI(b.EventName,         filter.EventName))       return false;
 
         if (filter.From.HasValue && b.TimestampUtc < filter.From.Value) return false;
         if (filter.To.HasValue   && b.TimestampUtc > filter.To.Value)   return false;
 
         return true;
     }
+
+    /// <summary>Returns false when <paramref name="value"/> is null; otherwise case-insensitive substring match.</summary>
+    private static bool ContainsCI(string? value, string token)
+        => value != null && value.Contains(token, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Returns false when <paramref name="value"/> is null; otherwise case-insensitive equality.</summary>
+    private static bool EqualsCI(string? value, string token)
+        => value != null && value.Equals(token, StringComparison.OrdinalIgnoreCase);
 }
 

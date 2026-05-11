@@ -422,7 +422,11 @@ namespace SW.Bus
 
         private void FireAndForget(IOperationalEvent evt)
         {
-            _ = operationalEventPublisher.Publish(evt);
+            operationalEventPublisher.Publish(evt)
+                .ContinueWith(t => logger.LogWarning(t.Exception,
+                        "Unobserved exception publishing operational event {EventType}.",
+                        evt.GetType().Name),
+                    TaskContinuationOptions.OnlyOnFaulted);
         }
     }
 }

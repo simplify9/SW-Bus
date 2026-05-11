@@ -91,7 +91,7 @@ internal sealed class BusDashboardDataService : IBusDashboardDataService
                 c.RetryCount,
                 c.IncomingRate,
                 c.AckRate,
-                c.RetryCount > busOptions.AlertRetryCriticalThreshold
+                c.RetryCount >= busOptions.AlertRetryCriticalThreshold
                     ? AlertSeverity.Critical
                     : AlertSeverity.Warning))
             .ToArray();
@@ -139,7 +139,7 @@ internal sealed class BusDashboardDataService : IBusDashboardDataService
                     lastErr?.ExceptionType,
                     lastErr?.ExceptionMessage,
                     lastDl?.TimestampUtc,
-                    c.FailedCount > busOptions.AlertDeadLetterCriticalThreshold
+                    c.FailedCount >= busOptions.AlertDeadLetterCriticalThreshold
                         ? AlertSeverity.Critical
                         : AlertSeverity.Warning);
             })
@@ -171,7 +171,7 @@ internal sealed class BusDashboardDataService : IBusDashboardDataService
                               c.QueueCount >= busOptions.QueueBackpressureThreshold;
 
         AlertSeverity health;
-        if (c.TotalNodes == 0 || c.FailedCount > busOptions.AlertDeadLetterCriticalThreshold)
+        if (c.TotalNodes == 0 || c.FailedCount >= busOptions.AlertDeadLetterCriticalThreshold)
             health = AlertSeverity.Critical;
         else if (c.FailedCount > 0 || c.RetryCount > busOptions.AlertRetryWarningThreshold || isBackpressured)
             health = AlertSeverity.Warning;

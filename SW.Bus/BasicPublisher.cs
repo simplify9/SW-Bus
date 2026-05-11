@@ -95,7 +95,10 @@ internal class BasicPublisher
                 props.Headers[OperationalEventEnvelope.TraceStateHeader] = activity.TraceStateString;
             props.Headers[OperationalEventEnvelope.TraceIdHeader] = activity.TraceId.ToString();
             props.Headers[OperationalEventEnvelope.SpanIdHeader] = activity.SpanId.ToString();
-            props.Headers[OperationalEventEnvelope.CausationIdHeader] = activity.SpanId.ToString();
+            // CausationId = the span that *caused* this publish (the parent), not the publish span itself.
+            // Omit when there is no parent so GetCausationId(props) correctly returns null.
+            if (activity.ParentId != null)
+                props.Headers[OperationalEventEnvelope.CausationIdHeader] = activity.ParentSpanId.ToString();
         }
 
         props.Headers.Add(BusOptions.SourceNodeIdHeaderName,busOptions.NodeId);
@@ -188,6 +191,10 @@ internal class BasicPublisher
 
     private void FireAndForget(IOperationalEvent evt)
     {
-        _ = operationalEventPublisher.Publish(evt, CancellationToken.None);
+        operationalEventPublisher.Publish(evt, CancellationToken.None)
+            .ContinueWith(t => Trace.TraceError(
+                    "Unobserved exception publishing operational event {0}: {1}",
+                    evt.GetType().Name, t.Exception),
+                TaskContinuationOptions.OnlyOnFaulted);
     }
 }
