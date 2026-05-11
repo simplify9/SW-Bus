@@ -1,0 +1,37 @@
+@page "/bus-viewer/dead-letters"
+@attribute [AllowAnonymous]
+@using SW.Bus.RabbitMqExtensions
+@inject IBusDashboardDataService DataService
+@{
+    ViewData["Title"]      = "Dead-Letter Inspection";
+    ViewData["ActivePage"] = "DeadLetters";
+
+    var deadLetters = await DataService.GetDeadLetterSummaryAsync();
+}
+
+@if (!deadLetters.Any())
+{
+    <article class="bv-card bv-card--ok">
+        <p>✓ No dead-letter messages detected. All consumers are healthy.</p>
+    </article>
+}
+else
+{
+    <p class="bv-muted">
+        <strong>@deadLetters.Length</strong> consumer(s) have messages in dead-letter queues.
+        Auto-refreshes every 15 s.
+    </p>
+
+    <div id="bv-dl-table"
+         class="bv-table-zone"
+         hx-get="/bus-viewer/partials/dead-letters"
+         hx-trigger="load, every 15s"
+         hx-swap="innerHTML"
+         hx-on::after-swap="bvOnSwap(this)">
+        <div class="bv-init-loader">
+            <div class="bv-spinner"></div>
+            <span>Loading dead-letter data…</span>
+        </div>
+    </div>
+}
+

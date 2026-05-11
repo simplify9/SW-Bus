@@ -1,0 +1,85 @@
+@page "/bus-viewer/login"
+@model SW.Bus.RabbitMqViewer.Areas.BusViewer.Pages.LoginModel
+@{ Layout = null; }
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Sign in — SW.Bus Operations</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@@picocss/pico@@2/css/pico.slate.min.css"/>
+    <link rel="stylesheet" href="/_content/SimplyWorks.Bus.RabbitMqViewer/bus-viewer.css"/>
+    <!-- Restore theme preference before first paint -->
+    <script>(function(){var t=localStorage.getItem('bv-theme');if(t)document.documentElement.setAttribute('data-theme',t);})()</script>
+</head>
+<body>
+<div class="bv-login-wrap">
+    <div class="bv-login-card">
+
+        <!-- Logo / branding -->
+        <div class="bv-logo bv-login-logo">
+            <span class="bv-logo-mark">⬡</span>
+            <span class="bv-logo-text">SW.Bus Operations</span>
+        </div>
+
+        <p class="bv-muted bv-login-subtitle">Sign in to access the dashboard</p>
+
+        @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+        {
+            <p class="bv-login-error">⚠ @Model.ErrorMessage</p>
+        }
+
+        <form method="post" autocomplete="off">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="ReturnUrl" value="@Model.ReturnUrl"/>
+
+            <div class="bv-login-field">
+                <label class="bv-login-label">Username</label>
+                <input class="bv-login-input"
+                       type="text"
+                       name="Username"
+                       value="@Model.Username"
+                       autocomplete="username"
+                       spellcheck="false"
+                       required
+                       autofocus/>
+            </div>
+
+            <div class="bv-login-field">
+                <label class="bv-login-label">Password</label>
+                <input class="bv-login-input"
+                       type="password"
+                       name="Password"
+                       autocomplete="off"
+                       required/>
+            </div>
+
+            <button class="bv-btn bv-login-submit" type="submit">Sign in</button>
+        </form>
+
+        <!-- Theme toggle on login page -->
+        <div style="text-align:center;margin-top:1.25rem;">
+            <button class="bv-theme-toggle" id="bv-login-theme-toggle" onclick="bvToggleTheme()">☀ Light</button>
+        </div>
+
+    </div>
+</div>
+
+<script>
+    function bvToggleTheme() {
+        var cur  = document.documentElement.getAttribute('data-theme');
+        var next = cur === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('bv-theme', next);
+        var btn = document.getElementById('bv-login-theme-toggle');
+        if (btn) btn.textContent = next === 'dark' ? '☀ Light' : '☾ Dark';
+    }
+    (function () {
+        var theme = document.documentElement.getAttribute('data-theme') || 'dark';
+        var btn = document.getElementById('bv-login-theme-toggle');
+        if (btn) btn.textContent = theme === 'dark' ? '☀ Light' : '☾ Dark';
+    })();
+</script>
+</body>
+</html>
+

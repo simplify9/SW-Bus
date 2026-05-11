@@ -1,0 +1,21 @@
+@page "/bus-viewer/consumers"
+@attribute [AllowAnonymous]
+@using SW.Bus.RabbitMqExtensions
+@inject IBusDashboardDataService DataService
+@{
+    ViewData["Title"]      = "Consumer Health";
+    ViewData["ActivePage"] = "Consumers";
+}
+
+<div id="bv-consumer-table"
+     class="bv-table-zone"
+     hx-get="/bus-viewer/partials/consumers"
+     hx-trigger="load, every 10s"
+     hx-swap="innerHTML"
+     hx-on::after-swap="bvOnSwap(this)">
+    <div class="bv-init-loader">
+        <div class="bv-spinner"></div>
+        <span>Loading consumer health…</span>
+    </div>
+</div>
+

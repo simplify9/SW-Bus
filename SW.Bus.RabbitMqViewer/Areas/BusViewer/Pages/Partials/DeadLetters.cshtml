@@ -1,0 +1,59 @@
+@page "/bus-viewer/partials/dead-letters"
+@attribute [AllowAnonymous]
+@using SW.Bus.RabbitMqExtensions
+@{ Layout = null; }
+@inject IBusDashboardDataService DataService
+@{
+    var dl = await DataService.GetDeadLetterSummaryAsync();
+}
+
+@if (!dl.Any())
+{
+    <p class="bv-muted">✓ No dead-letter messages.</p>
+}
+else
+{
+    <table class="bv-table">
+        <thead>
+        <tr>
+            <th>Severity</th>
+            <th>Consumer</th>
+            <th>Message Type</th>
+            <th>Dead-Letter Count</th>
+            <th>Last Exception</th>
+            <th>Last Failure</th>
+            <th>Dead-Letter Queue</th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var d in dl)
+        {
+            <tr class="bv-row--@d.Severity.ToString().ToLower()">
+                <td><span class="bv-badge bv-badge--@d.Severity.ToString().ToLower()">@d.Severity</span></td>
+                <td>@d.ConsumerName</td>
+                <td>@d.MessageName</td>
+                <td class="bv-critical bv-bold">@d.DeadLetterCount.ToString("N0")</td>
+                <td>
+                    @if (!string.IsNullOrWhiteSpace(d.LastExceptionType))
+                    {
+                        <span class="bv-exception-type">@d.LastExceptionType</span>
+                        @if (!string.IsNullOrWhiteSpace(d.LastExceptionMessage))
+                        {
+                            <br/><small class="bv-muted">@d.LastExceptionMessage</small>
+                        }
+                    }
+                    else
+                    {
+                        <span class="bv-muted">—</span>
+                    }
+                </td>
+                <td class="bv-muted">
+                    @(d.LastFailedAt.HasValue ? d.LastFailedAt.Value.ToString("yyyy-MM-dd HH:mm:ss") : "—")
+                </td>
+                <td class="bv-mono bv-muted bv-small">@d.DeadLetterQueueName</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+

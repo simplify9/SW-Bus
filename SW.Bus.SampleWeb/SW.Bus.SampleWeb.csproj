@@ -2,16 +2,18 @@
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="5.0.11" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
     <PackageReference Include="SimplyWorks.CqApi" Version="8.2.6" />
-    
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\SW.Bus\SW.Bus.csproj" />
+    <ProjectReference Include="..\SW.Bus.RabbitMqViewer\SW.Bus.RabbitMqViewer.csproj" />
   </ItemGroup>
 
 </Project>

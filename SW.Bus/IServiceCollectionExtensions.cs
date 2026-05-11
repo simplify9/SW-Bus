@@ -1,5 +1,6 @@
-﻿﻿using Microsoft.Extensions.Configuration;
+﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using RabbitMQ.Client;
 using SW.HttpExtensions;
@@ -56,7 +57,7 @@ namespace SW.Bus
 
             if (string.IsNullOrEmpty(busOptions.ManagementUrl))
             {
-                busOptions.ManagementUrl = $"https://{factory.HostName}";
+                busOptions.ManagementUrl = $"http://{factory.HostName}:15672";
             }
             if (string.IsNullOrEmpty(busOptions.ManagementUsername))
             {
@@ -74,6 +75,22 @@ namespace SW.Bus
             services.AddSingleton<IConsumerReader, ConsumerReader>();
             services.AddSingleton<ConsumerDiscovery>();
             services.AddMemoryCache();
+            services.AddSingleton<BusMetrics>();
+            services.AddSingleton<OperationalEventBuffer>();
+            services.AddSingleton<IOperationalEventPublisher, OperationalEventChannelPublisher>();
+            services.AddHostedService<OperationalEventDispatcher>();
+
+            // Dashboard data layer — in-memory event ring buffer is registered as both
+            // IOperationalEventBatchSink (receives from dispatcher) and IOperationalEventStore
+            // (queried by the dashboard). Additional sinks (Elasticsearch, ClickHouse, etc.)
+            // can be added by the caller via AddSingleton<IOperationalEventBatchSink, MySink>().
+            services.AddSingleton<InMemoryOperationalEventStore>();
+            services.AddSingleton<IOperationalEventStore>(sp =>
+                sp.GetRequiredService<InMemoryOperationalEventStore>());
+            services.AddSingleton<IOperationalEventBatchSink>(sp =>
+                sp.GetRequiredService<InMemoryOperationalEventStore>());
+            services.TryAddSingleton<IAlertEvaluator, AlertEvaluator>();
+            services.TryAddSingleton<IBusDashboardDataService, BusDashboardDataService>();
 
             using var conn = factory.CreateConnection();
             using var model = conn.CreateModel();
@@ -130,7 +147,9 @@ namespace SW.Bus
             return services.AddScoped(serviceProvider => new BasicPublisher(
                 model,
                 serviceProvider.GetRequiredService<BusOptions>(),
-                serviceProvider.GetRequiredService<RequestContext>()))
+                serviceProvider.GetRequiredService<RequestContext>(),
+                serviceProvider.GetRequiredService<IOperationalEventPublisher>(),
+                serviceProvider.GetRequiredService<BusMetrics>()))
             .AddScoped<IPublish, Publisher>(serviceProvider => new Publisher(
                 serviceProvider.GetRequiredService<BasicPublisher>(),
                 busOptions.ProcessExchange))

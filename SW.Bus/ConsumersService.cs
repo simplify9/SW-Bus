@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using SW.Bus.RabbitMqExtensions;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -20,6 +21,7 @@ internal class ConsumersService : IHostedService
     // Thread-safe dictionary for runtime updates
     private readonly ConcurrentDictionary<string, (IModel model, ConsumerDefinition consumerDefinition)> openModels;
     private readonly ConsumerRunner consumerRunner;
+    private readonly IOperationalEventPublisher operationalEventPublisher;
 
     private IConnection conn;
     private IModel nodeModel;
@@ -28,13 +30,15 @@ internal class ConsumersService : IHostedService
     private readonly SemaphoreSlim _topologyLock = new(1, 1);
 
     public ConsumersService(ILogger<ConsumersService> logger, BusOptions busOptions,
-        ConsumerDiscovery consumerDiscovery, ConnectionFactory connectionFactory, ConsumerRunner consumerRunner)
+        ConsumerDiscovery consumerDiscovery, ConnectionFactory connectionFactory, ConsumerRunner consumerRunner,
+        IOperationalEventPublisher operationalEventPublisher)
     {
         this.logger = logger;
         this.busOptions = busOptions;
         this.consumerDiscovery = consumerDiscovery;
         this.connectionFactory = connectionFactory;
         this.consumerRunner = consumerRunner;
+        this.operationalEventPublisher = operationalEventPublisher;
 
         openModels = new ConcurrentDictionary<string, (IModel, ConsumerDefinition)>();
     }
@@ -175,6 +179,23 @@ internal class ConsumersService : IHostedService
         consumer.Shutdown += (ch, args) =>
         {
             logger.LogWarning($"Consumer {consumerDefinition.QueueName} shutdown. {args}");
+            FireAndForget(new ConsumerDisconnected(
+                DateTime.UtcNow,
+                busOptions.OperationalEventsSchemaVersion,
+                Environment.MachineName,
+                busOptions.EnvironmentName,
+                busOptions.ApplicationName ?? string.Empty,
+                busOptions.ProcessExchange,
+                consumerDefinition.QueueName,
+                consumerDefinition.ServiceType?.Name ?? string.Empty,
+                consumerDefinition.MessageTypeName,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                null,
+                args?.ReplyText ?? "shutdown"));
             return Task.CompletedTask;
         };
         
@@ -189,6 +210,25 @@ internal class ConsumersService : IHostedService
             consumerDefinition.ConsumerArgs, consumer);
 
         openModels.TryAdd(consumerDefinition.QueueName, (model, consumerDefinition));
+        FireAndForget(new ConsumerConnected(
+            DateTime.UtcNow,
+            busOptions.OperationalEventsSchemaVersion,
+            Environment.MachineName,
+            busOptions.EnvironmentName,
+            busOptions.ApplicationName ?? string.Empty,
+            busOptions.ProcessExchange,
+            consumerDefinition.QueueName,
+            consumerDefinition.ServiceType?.Name ?? string.Empty,
+            consumerDefinition.MessageTypeName,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            null,
+            consumerDefinition.ConsumerTag));
+
+        TryEmitQueueBackpressure(model, consumerDefinition);
     }
 
     private async Task RefreshConsumers()
@@ -319,5 +359,51 @@ internal class ConsumersService : IHostedService
         {
             _topologyLock.Release();
         }
+    }
+
+    private void TryEmitQueueBackpressure(IModel model, ConsumerDefinition consumerDefinition)
+    {
+        if (busOptions.QueueBackpressureThreshold <= 0)
+            return;
+
+        try
+        {
+            var depth = model.MessageCount(consumerDefinition.QueueName);
+            if (depth < busOptions.QueueBackpressureThreshold)
+                return;
+
+            FireAndForget(new QueueBackpressureDetected(
+                DateTime.UtcNow,
+                busOptions.OperationalEventsSchemaVersion,
+                Environment.MachineName,
+                busOptions.EnvironmentName,
+                busOptions.ApplicationName ?? string.Empty,
+                busOptions.ProcessExchange,
+                consumerDefinition.QueueName,
+                consumerDefinition.ServiceType?.Name ?? string.Empty,
+                consumerDefinition.MessageTypeName,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                null,
+                depth,
+                consumerDefinition.QueuePrefetch,
+                busOptions.QueueBackpressureThreshold));
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Queue backpressure check failed for {QueueName}", consumerDefinition.QueueName);
+        }
+    }
+
+    private void FireAndForget(IOperationalEvent evt)
+    {
+        operationalEventPublisher.Publish(evt)
+            .ContinueWith(t => logger.LogWarning(t.Exception,
+                    "Unobserved exception publishing operational event {EventType}.",
+                    evt.GetType().Name),
+                TaskContinuationOptions.OnlyOnFaulted);
     }
 }

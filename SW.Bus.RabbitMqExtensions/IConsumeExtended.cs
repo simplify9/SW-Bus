@@ -12,6 +12,14 @@ public interface IConsumeExtended : IConsume
     /// </summary>
     /// <returns>A task that represents the asynchronous operation. The task result contains a dictionary of message type names and their consumer options.</returns>
     Task<IDictionary<string,ConsumerOptions>> GetMessageTypeNamesWithOptions();
+    /// <summary>
+    ///  Gets a title for the consumer, which can be used for documentation or dashboard ui.
+    /// </summary>
+    string? Title => null;
+    /// <summary>
+    /// Gets a description of the consumer, which can be used for documentation or dashboard ui.
+    /// </summary>
+    string? Description => null;
 }
 
 /// <summary>
@@ -25,4 +33,12 @@ public interface IConsumeExtended<TMessage> : IConsume<TMessage> where TMessage 
     /// </summary>
     /// <returns>A task that represents the asynchronous operation. The task result contains the consumer options.</returns>
     Task<ConsumerOptions> GetConsumerOptions();
+    /// <summary>
+    ///  Gets a title for the consumer, which can be used for documentation or dashboard ui.
+    /// </summary>
+    string? Title => null;
+    /// <summary>
+    /// Gets a description of the consumer, which can be used for documentation or dashboard ui.
+    /// </summary>
+    string? Description => null;
 }
