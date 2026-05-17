@@ -34,7 +34,7 @@ public class ErrorQueueReader : IErrorQueueReader
     }
 
     /// <inheritdoc />
-    public async Task<IEnumerable<ErrorMessage>> Peek<TConsumer, TMessage>(ErrorQueueType queueType, int count = 10) 
+    public async Task<IEnumerable<ErrorMessage>> Peek<TConsumer, TMessage>(ErrorQueueType queueType, int count = 10)
         where TConsumer : IConsume<TMessage> where TMessage : class
     {
         var messageName = typeof(TMessage).Name;
@@ -42,7 +42,7 @@ public class ErrorQueueReader : IErrorQueueReader
     }
 
     /// <inheritdoc />
-    public async Task<IEnumerable<ErrorMessage>> Peek<TConsumer>(string messageName, ErrorQueueType queueType, int count = 10) 
+    public async Task<IEnumerable<ErrorMessage>> Peek<TConsumer>(string messageName, ErrorQueueType queueType, int count = 10)
         where TConsumer : IConsume
     {
         return await PeekInternal(typeof(TConsumer), messageName, queueType, count);
@@ -62,20 +62,20 @@ public class ErrorQueueReader : IErrorQueueReader
     {
         if (consumerType == null)
             throw new ArgumentNullException(nameof(consumerType));
-        
+
         if (string.IsNullOrWhiteSpace(messageName))
             throw new ArgumentException("Message name cannot be null or empty.", nameof(messageName));
 
-        var definitions = await consumerDiscovery.Load(true);
+        var definitions = await consumerDiscovery.Load();
         var definition = definitions.FirstOrDefault(d => d.ServiceType == consumerType && d.MessageTypeName == messageName);
 
-        if (definition == null) 
+        if (definition == null)
             throw new InvalidOperationException(
                 $"No consumer definition found for {consumerType.Name} handling message type '{messageName}'. " +
                 $"Ensure the consumer is registered via AddBusConsume().");
 
-        string targetQueue = queueType == ErrorQueueType.Retry 
-            ? definition.RetryQueueName 
+        string targetQueue = queueType == ErrorQueueType.Retry
+            ? definition.RetryQueueName
             : definition.BadQueueName;
 
         if (string.IsNullOrEmpty(targetQueue))
@@ -90,10 +90,10 @@ public class ErrorQueueReader : IErrorQueueReader
     {
         if (string.IsNullOrWhiteSpace(queueName))
             throw new ArgumentException("Queue name cannot be null or empty.", nameof(queueName));
-        
+
         if (count <= 0)
             throw new ArgumentOutOfRangeException(nameof(count), count, "Count must be greater than zero.");
-        
+
         if (count > 100)
             throw new ArgumentOutOfRangeException(nameof(count), count, "Count cannot exceed 100 messages to prevent excessive load on RabbitMQ.");
 
@@ -112,7 +112,7 @@ public class ErrorQueueReader : IErrorQueueReader
         catch (HttpRequestException ex)
         {
             throw new InvalidOperationException(
-                $"Failed to peek messages from queue '{queueName}'. The queue may not exist, or the RabbitMQ Management API is unavailable.", 
+                $"Failed to peek messages from queue '{queueName}'. The queue may not exist, or the RabbitMQ Management API is unavailable.",
                 ex);
         }
     }

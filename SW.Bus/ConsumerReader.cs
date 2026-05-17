@@ -23,13 +23,13 @@ public class ConsumerReader : IConsumerReader
     private readonly ManagementClient managementClient;
     private readonly Vhost vhost;
     private readonly IMemoryCache memoryCache;
-    
+
     /// <summary>
     /// Tracks the timestamp of the last successful fetch from RabbitMQ management API.
     /// Used to monitor cache freshness and API availability.
     /// </summary>
     private DateTime lastUpdatedUtc = DateTime.MinValue;
-    
+
     /// <summary>
     /// Initializes a new instance of the <see cref="ConsumerReader"/> class.
     /// </summary>
@@ -38,9 +38,9 @@ public class ConsumerReader : IConsumerReader
     /// <param name="consumerDiscovery">Service for discovering registered consumers and their definitions.</param>
     /// <param name="memoryCache">Memory cache for storing queue statistics with configurable expiration to prevent API abuse.</param>
     public ConsumerReader(
-        HttpClient httpClient, 
-        BusOptions busOptions, 
-        ConsumerDiscovery consumerDiscovery, 
+        HttpClient httpClient,
+        BusOptions busOptions,
+        ConsumerDiscovery consumerDiscovery,
         IMemoryCache memoryCache)
     {
         this.busOptions = busOptions;
@@ -50,20 +50,20 @@ public class ConsumerReader : IConsumerReader
         // ManagementClient uses the managed HttpClient
         managementClient = new ManagementClient(
             new Uri(busOptions.ManagementUrl),
-            busOptions.ManagementUsername, 
+            busOptions.ManagementUsername,
             busOptions.ManagementPassword
         );
-        
+
         vhost = new Vhost(busOptions.VirtualHost);
     }
 
     /// <inheritdoc />
     public Task<DateTime> LastUpdated => Task.FromResult(lastUpdatedUtc);
-    
+
     /// <inheritdoc />
     public async Task<ConsumerCount> GetConsumerCount<TConsumer>(string messageName) where TConsumer : IConsume
     {
-        var definitions = await consumerDiscovery.Load(true);
+        var definitions = await consumerDiscovery.Load();
         var definition = definitions.FirstOrDefault(d => d.ServiceType == typeof(TConsumer) && d.MessageTypeName == messageName);
 
         if (definition == null)
@@ -78,7 +78,7 @@ public class ConsumerReader : IConsumerReader
     /// <inheritdoc />
     public async Task<ConsumerCount[]> GetConsumerCount<TConsumer>() where TConsumer : IConsume
     {
-        var definitions = await consumerDiscovery.Load(true);
+        var definitions = await consumerDiscovery.Load();
         var filteredDefinitions = definitions.Where(d => d.ServiceType == typeof(TConsumer));
         return await GetConsumerCounts(filteredDefinitions);
     }
@@ -88,9 +88,9 @@ public class ConsumerReader : IConsumerReader
         where TTypedConsumer : IConsume<TMessage> where TMessage : class
     {
         var messageName = typeof(TMessage).Name;
-        var definitions = await consumerDiscovery.Load(true);
+        var definitions = await consumerDiscovery.Load();
         var definition = definitions.FirstOrDefault(d => d.ServiceType == typeof(TTypedConsumer) && d.MessageTypeName == messageName);
-        
+
         if (definition == null)
         {
             var queueName = GetQueueName<TTypedConsumer>(messageName);
@@ -103,7 +103,7 @@ public class ConsumerReader : IConsumerReader
     /// <inheritdoc />
     public async Task<ConsumerCount[]> GetAllConsumersCount()
     {
-        var definitions = await consumerDiscovery.Load(true);
+        var definitions = await consumerDiscovery.Load();
         return await GetConsumerCounts(definitions);
     }
 
@@ -120,13 +120,13 @@ public class ConsumerReader : IConsumerReader
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(busOptions.MonitoringCacheSeconds);
             var result = await managementClient.GetQueuesAsync(vhost.Name);
-            
+
             // Update the timestamp on a successful fetch
             lastUpdatedUtc = DateTime.UtcNow;
-            
+
             return result;
         });
-        
+
         var queuesMap = queues.ToDictionary(q => q.Name, StringComparer.OrdinalIgnoreCase);
 
         return definitions.Select(d =>
@@ -219,10 +219,10 @@ public class ConsumerReader : IConsumerReader
             try
             {
                 var queue = await managementClient.GetQueueAsync(queueName, vhost.Name);
-                
+
                 // Only update if we actually got a queue back
                 if (queue != null) lastUpdatedUtc = DateTime.UtcNow;
-                
+
                 return queue;
             }
             catch
