@@ -18,7 +18,9 @@ public class ConsumerDiscovery(IServiceProvider sp, BusOptions busOptions)
             $"{busOptions.ProcessExchange}{(string.IsNullOrWhiteSpace(busOptions.ApplicationName) ? "" : $".{busOptions.ApplicationName}")}";
 
         using var scope = sp.CreateScope();
-        var consumers = scope.ServiceProvider.GetServices<IConsume>();
+        var consumers = scope.ServiceProvider.GetServices<IConsume>()
+            .GroupBy(s => s.GetType())
+            .Select(g => g.First());
         foreach (var svc in consumers)
         {
             if (svc is IConsumeExtended extendedSvc)
@@ -61,10 +63,10 @@ public class ConsumerDiscovery(IServiceProvider sp, BusOptions busOptions)
                 if (extendedInterface.IsAssignableFrom(svc.GetType()))
                 {
                     var method = extendedInterface.GetMethod(nameof(IConsumeExtended<object>.GetConsumerOptions));
-                    if(method == null)
+                    if (method == null)
                         throw new InvalidOperationException(
                             $"Method {nameof(IConsumeExtended<object>.GetConsumerOptions)} not found in {extendedInterface.Name}");
-                    
+
                     options = await ((Task<ConsumerOptions>)method.Invoke(svc, null))!;
                 }
 
@@ -102,16 +104,16 @@ public class ConsumerDiscovery(IServiceProvider sp, BusOptions busOptions)
 
         var genericConsumers = scope.ServiceProvider.GetServices<IListenGenericBase>();
         foreach (var svc in genericConsumers)
-        foreach (var type in svc.GetType().GetTypeInfo().ImplementedInterfaces
-                     .Where(t => t.IsGenericType && t.GetGenericTypeDefinition() == typeof(IListen<>)))
-            consumerDefinitions.Add(new ListenerDefinition
-            {
-                ServiceType = svc.GetType(),
-                MessageType = type.GetGenericArguments()[0],
-                MessageTypeName = type.GetGenericArguments()[0].Name,
-                Method = type.GetMethod("Process"),
-                FailMethod = type.GetMethod("OnFail")
-            });
+            foreach (var type in svc.GetType().GetTypeInfo().ImplementedInterfaces
+                         .Where(t => t.IsGenericType && t.GetGenericTypeDefinition() == typeof(IListen<>)))
+                consumerDefinitions.Add(new ListenerDefinition
+                {
+                    ServiceType = svc.GetType(),
+                    MessageType = type.GetGenericArguments()[0],
+                    MessageTypeName = type.GetGenericArguments()[0].Name,
+                    Method = type.GetMethod("Process"),
+                    FailMethod = type.GetMethod("OnFail")
+                });
 
         return consumerDefinitions;
     }
