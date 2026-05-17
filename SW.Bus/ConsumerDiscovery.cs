@@ -11,7 +11,7 @@ namespace SW.Bus;
 
 public class ConsumerDiscovery(IServiceProvider sp, BusOptions busOptions)
 {
-    internal async Task<ICollection<ConsumerDefinition>> Load(bool consumersOnly = false)
+    internal async Task<ICollection<ConsumerDefinition>> Load()
     {
         var consumerDefinitions = new List<ConsumerDefinition>();
         var queueNamePrefix =
@@ -49,8 +49,6 @@ public class ConsumerDiscovery(IServiceProvider sp, BusOptions busOptions)
             }
         }
 
-        if (consumersOnly)
-            return consumerDefinitions;
         var genericConsumers = scope.ServiceProvider.GetServices<IConsumeGenericBase>();
         foreach (var svc in genericConsumers)
             foreach (var type in svc.GetType().GetTypeInfo().ImplementedInterfaces

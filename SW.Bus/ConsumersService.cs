@@ -238,7 +238,7 @@ internal class ConsumersService : IHostedService
         try
         {
             logger.LogInformation("Refreshing consumers...");
-            var newDefinitions = await consumerDiscovery.Load(true);
+            var newDefinitions = await consumerDiscovery.Load();
             
             // 1. Declare any NEW queues
             using (var model = conn.CreateModel())
