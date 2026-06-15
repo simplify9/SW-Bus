@@ -25,24 +25,26 @@ The library ships as three complementary NuGet packages:
 3. [Quick Start](#quick-start)
 4. [Publishing Messages](#publishing-messages)
 5. [Consuming Messages](#consuming-messages)
-6. [Broadcasting & Listeners](#broadcasting--listeners)
-7. [Per-Queue Configuration](#per-queue-configuration)
-8. [Extended Consumer Options (IConsumeExtended)](#extended-consumer-options-iconsumeextended)
-9. [Monitoring — IConsumerReader](#monitoring--iconsumerreader)
-10. [Error Queue Inspection — IErrorQueueReader](#error-queue-inspection--ierrorqueuereader)
-11. [Operational Events Pipeline](#operational-events-pipeline)
-12. [Dashboard Data Service — IBusDashboardDataService](#dashboard-data-service--ibusdashboarddataservice)
-13. [Custom Alert Thresholds — IAlertEvaluator](#custom-alert-thresholds--ialertevaluator)
-14. [Building a Custom Dashboard](#building-a-custom-dashboard)
-15. [Operations Viewer Dashboard](#operations-viewer-dashboard)
-16. [Full BusOptions Reference](#full-busoptions-reference)
-17. [Architecture](#architecture)
-18. [Testing](#testing)
-19. [Dependencies](#dependencies)
+6. [Delayed Publishing](#delayed-publishing)
+7. [Broadcasting & Listeners](#broadcasting--listeners)
+8. [Per-Queue Configuration](#per-queue-configuration)
+9. [Extended Consumer Options (IConsumeExtended)](#extended-consumer-options-iconsumeextended)
+10. [Monitoring — IConsumerReader](#monitoring--iconsumerreader)
+11. [Error Queue Inspection — IErrorQueueReader](#error-queue-inspection--ierrorqueuereader)
+12. [Operational Events Pipeline](#operational-events-pipeline)
+13. [Dashboard Data Service — IBusDashboardDataService](#dashboard-data-service--ibusdashboarddataservice)
+14. [Custom Alert Thresholds — IAlertEvaluator](#custom-alert-thresholds--ialertevaluator)
+15. [Building a Custom Dashboard](#building-a-custom-dashboard)
+16. [Operations Viewer Dashboard](#operations-viewer-dashboard)
+17. [Full BusOptions Reference](#full-busoptions-reference)
+18. [Architecture](#architecture)
+19. [Testing](#testing)
+20. [Dependencies](#dependencies)
 
 ## Features
 
 - 🚌 **Simple Message Publishing** — typed and string-based `IPublish`
+- ⏱️ **Delayed Publishing** — deliver to a single consumer after an exact delay via `IDelayedPublish`; uses the RabbitMQ Delayed Message Exchange plugin when available, TTL buckets otherwise
 - 📡 **Broadcasting** — fan-out to all application instances via `IBroadcast` / `IListen<T>`
 - 🔄 **Automatic Retries** — configurable per-queue retry counts and delay with dead-letter routing
 - 🎯 **Typed Consumers** — `IConsume<T>` with strongly-typed message deserialization
@@ -204,6 +206,121 @@ public class SecureConsumer : IConsume<SecureMessage>
 services.AddBusConsume();                                        // scan calling assembly
 services.AddBusConsume(typeof(OrderCreatedConsumer).Assembly);  // specific assembly
 ```
+
+---
+
+## Delayed Publishing
+
+`IDelayedPublish` delivers a message to **one specific consumer queue** after a delay. Unlike `IPublish` — which routes by message type and fans out to every consumer bound to that type — delayed publishing routes by the target consumer's class name, so only that one queue receives the message.
+
+`IDelayedPublish` is registered automatically when you call `AddBusPublish()`.
+
+### Usage
+
+```csharp
+public class OrderController : ControllerBase
+{
+    private readonly IDelayedPublish _delayed;
+    public OrderController(IDelayedPublish delayed) => _delayed = delayed;
+
+    [HttpPost("schedule")]
+    public async Task<IActionResult> Schedule()
+    {
+        // Deliver to OrderReminderConsumer.Process(OrderReminder) in 30 minutes
+        await _delayed.PublishDelayed(
+            new OrderReminder { OrderId = "123" },
+            consumerName: nameof(OrderReminderConsumer),
+            delay: TimeSpan.FromMinutes(30));
+
+        return Accepted();
+    }
+}
+```
+
+The `consumerName` is the **exact class name** of the target consumer. Combined with the message type name, it forms the naked queue name `{ConsumerClass}.{MessageType}` that uniquely identifies the consumer queue.
+
+```csharp
+// Raw overload — useful when consumer and message types are not referenced in the calling assembly
+await _delayed.PublishDelayed(
+    messageTypeName: "OrderReminder",
+    body: jsonString,
+    nakedQueueName: "orderreminderconsumer.orderreminder",
+    delay: TimeSpan.FromMinutes(30));
+```
+
+Passing `TimeSpan.Zero` (or negative) skips the delay entirely and delivers immediately to the targeted consumer.
+
+### Why not `IPublish` with a delay?
+
+`IPublish.Publish` routes by message type name on the process exchange. Every consumer queue bound to that message type receives a copy — that is intentional fan-out. `IDelayedPublish` routes by the consumer's naked queue name on a separate direct exchange, so the message reaches exactly one queue regardless of how many other consumers handle the same message type.
+
+### How delivery works
+
+The library detects at startup whether the broker has the [RabbitMQ Delayed Message Exchange plugin](https://github.com/rabbitmq/rabbitmq-delayed-message-exchange) enabled, and picks the appropriate strategy automatically. You write the same calling code either way.
+
+#### Strategy 1 — Delayed Message Exchange plugin (exact delays)
+
+When the plugin is available (`BusOptions.DelayedPluginAvailable == true`), the library declares an `x-delayed-message` exchange (`v3.{env}.delay.x`) and publishes with an `x-delay` header set to the requested milliseconds. The plugin holds the message broker-side until the delay elapses, then routes it directly to the target consumer queue.
+
+```
+Publisher ──► v3.{env}.delay.x  (x-delayed-message, direct)
+                      │  holds for exactly N ms
+                      ▼
+              v3.{env}.{app}.{ConsumerClass}.{MessageType}  ← target consumer queue
+```
+
+This is the preferred path — delays are precise to the millisecond.
+
+#### Strategy 2 — TTL delay buckets (fallback when plugin is absent)
+
+When the plugin is not installed, the library uses RabbitMQ's native TTL + dead-letter mechanism. Requested delays are rounded **up** to the nearest pre-configured bucket (default ladder: 1 s, 5 s, 15 s, 30 s, 60 s, 5 min, 15 min, 30 min, 1 h). A pair of exchanges and a queue are created on demand for each bucket duration used.
+
+```
+Publisher
+  │  publish(routingKey = "orderreminderconsumer.orderreminder")
+  ▼
+v3.{env}.delay.in.1800s   ← fanout entry exchange
+  │  (delivers to TTL queue regardless of routing key,
+  │   but preserves the original routing key on the message)
+  ▼
+v3.{env}.delay.1800s      ← TTL queue (x-message-ttl = 1800000 ms)
+  │
+  │  TTL expires → dead-letter with original routing key intact
+  ▼
+v3.{env}.delay            ← direct router exchange
+  │  routes by "orderreminderconsumer.orderreminder"
+  ▼
+v3.{env}.{app}.orderreminderconsumer.orderreminder  ← target consumer queue
+```
+
+**Why the fanout entry exchange?**  
+Publishing directly into the TTL queue (via the default exchange) would replace the routing key with the queue name, losing the consumer target. The fanout entry exchange delivers to the TTL queue without touching the routing key, so it survives intact all the way to the dead-letter route on the direct router.
+
+Bucket queues are declared lazily on first use. Each bucket is created at most once per process lifetime. The bucket ladder is configurable:
+
+```csharp
+services.AddBus(config =>
+{
+    // Custom bucket ladder — delays round up to nearest value (seconds)
+    config.DelayBucketsSeconds = new[] { 5, 30, 60, 300, 3600 };
+});
+```
+
+A delay larger than all configured buckets creates a one-off bucket for that exact duration.
+
+### Exchange topology summary
+
+| Exchange | Type | Purpose |
+|---|---|---|
+| `v3.{env}.delay` | Direct | Final router — consumer queues bind here by naked queue name |
+| `v3.{env}.delay.x` | x-delayed-message | Plugin path — holds messages until delay elapses |
+| `v3.{env}.delay.in.{N}s` | Fanout | TTL fallback — entry point for each bucket duration |
+
+Each consumer queue gets an extra binding to `v3.{env}.delay` (and `v3.{env}.delay.x` when the plugin is present) during `ConsumersService` startup. No other topology changes are needed.
+
+### Failure handling after delivery
+
+Once a delayed message is delivered to the consumer queue, the normal retry and dead-letter machinery takes over. If the consumer throws, the message is rejected to its `.retry` queue, retried up to `DefaultRetryCount` times, and moved to `.bad` on exhaustion — exactly the same as a non-delayed message.
 
 ---
 
@@ -911,9 +1028,20 @@ services.AddBus(config =>
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        RabbitMQ Broker                          │
-│  Process Exchange ──► Consumer Queue ──► Retry Queue            │
-│  Dead-Letter Exchange ──────────────────► Bad Queue             │
-│  Node Exchange ─────► Per-Instance Queue (broadcasts)           │
+│  Process Exchange (direct) ──► Consumer Queue                   │
+│                                    │ on failure                 │
+│                                    ▼                            │
+│  Dead-Letter Exchange ──► Retry Queue ──► (TTL) ──► Consumer Q  │
+│                       └──► Bad Queue (exhausted retries)        │
+│                                                                 │
+│  Node Exchange (direct) ──► Per-Instance Queue (broadcasts)     │
+│                                                                 │
+│  Delay Exchange (direct) ──────────────────────► Consumer Queue │
+│  ├── [plugin path]  Delay Plugin Exchange (x-delayed-message)   │
+│  └── [TTL fallback] Delay Entry Exchange (fanout)               │
+│                          └──► Delay Bucket Queue (TTL)          │
+│                                    │ on expiry                  │
+│                                    └──► Delay Exchange ─────►   │
 └─────────────────────────────────────────────────────────────────┘
           ▲                       │
           │ publish               │ consume
@@ -964,13 +1092,48 @@ v3.development.orderservice.ordercreatedconsumer.ordercreated.bad
 
 ## Testing
 
+### Unit tests
+
 ```csharp
-// Use mock publisher — logs publish calls without sending to RabbitMQ
+// Replace IPublish with a no-op — no RabbitMQ connection required
 services.AddBusPublishMock();
 
 // IBusDashboardDataService, IConsumerReader, IErrorQueueReader are standard
-// interfaces — mock them with any mocking library in unit tests
+// interfaces — mock them with any mocking library
 ```
+
+### Integration tests
+
+The `SW.Bus.IntegrationTests` project spins up real RabbitMQ containers via [Testcontainers](https://testcontainers.com/) and tests the full delayed-publishing path against both broker variants. Docker must be running.
+
+```bash
+dotnet test SW.Bus.IntegrationTests/SW.Bus.IntegrationTests.csproj
+```
+
+#### What is tested
+
+**`PluginAvailableTests`** — starts a container from `heidiks/rabbitmq-delayed-message-exchange:3.13.0-management` (the plugin is pre-enabled). Asserts that:
+- `BusOptions.DelayedPluginAvailable` is `true` (plugin was detected at startup).
+- A message published with a 5-second delay is **not** delivered before the delay elapses.
+- The message **is** delivered after the delay, routed via the `x-delayed-message` exchange.
+
+**`PluginUnavailableTests`** — starts a container from stock `rabbitmq:3.13-management` (no plugin). Asserts that:
+- `BusOptions.DelayedPluginAvailable` is `false`.
+- A message published with a 5-second delay is **not** delivered before the delay elapses.
+- The message **is** delivered after the delay, routed via the TTL-bucket fallback.
+
+Both test classes share the same scenario logic in `DelayedDeliveryScenario.RunAsync`, which boots a full generic host (`AddBus` + `AddBusConsume` + `AddBusPublish`), waits for consumer topology to bind, publishes a delayed message, checks it has not arrived early, then polls until it arrives or a 25-second deadline passes.
+
+#### Structure
+
+| File | Role |
+|---|---|
+| `BusHarness` | Boots a real `IHost` against a container's connection string; waits for `ConsumersService` to declare topology |
+| `DelayedConsumer` | `IConsume<DelayDto>` — target consumer that records receive timestamps in `MessageSink` |
+| `MessageSink` | Singleton `ConcurrentDictionary` of message id → received-at timestamp |
+| `DelayedDeliveryScenario` | Shared assertions used by both test classes |
+| `PluginAvailableTests` | Container with the delayed-message plugin |
+| `PluginUnavailableTests` | Stock container, exercises TTL buckets |
 
 ---
 

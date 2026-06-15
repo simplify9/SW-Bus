@@ -100,6 +100,25 @@ namespace SW.Bus
             model.ExchangeDeclare(busOptions.NodeExchange, ExchangeType.Direct, true);
             model.ExchangeDeclare(busOptions.NodeDeadLetterExchange, ExchangeType.Direct, true);
 
+            // Final router for delayed messages (TTL buckets release onto this; consumers bind to it by naked name).
+            model.ExchangeDeclare(busOptions.DelayExchange, ExchangeType.Direct, true);
+
+            // Detect the Delayed Message Exchange plugin by trying to declare an x-delayed-message exchange
+            // on a throwaway channel; absence closes the channel with command_invalid (503).
+            using (var probeModel = conn.CreateModel())
+            {
+                try
+                {
+                    probeModel.ExchangeDeclare(busOptions.DelayPluginExchange, "x-delayed-message", true, false,
+                        new System.Collections.Generic.Dictionary<string, object> { { "x-delayed-type", "direct" } });
+                    busOptions.DelayedPluginAvailable = true;
+                }
+                catch
+                {
+                    busOptions.DelayedPluginAvailable = false;
+                }
+            }
+
             model.Close();
             conn.Close();
 
@@ -155,7 +174,11 @@ namespace SW.Bus
                 busOptions.ProcessExchange))
             .AddScoped<IBroadcast, Broadcaster>(serviceProvider => new Broadcaster(
                 serviceProvider.GetRequiredService<BasicPublisher>(),
-                busOptions.NodeExchange, busOptions.NodeRoutingKey));
+                busOptions.NodeExchange, busOptions.NodeRoutingKey))
+            .AddScoped<IDelayedPublish, DelayedPublisher>(serviceProvider => new DelayedPublisher(
+                serviceProvider.GetRequiredService<BasicPublisher>(),
+                serviceProvider.GetRequiredService<BusOptions>(),
+                model));
 
         }
 

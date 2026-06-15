@@ -124,6 +124,12 @@ internal class ConsumersService : IHostedService
 
         model.QueueDeclare(c.BadQueueName, true, false, false, ConsumerDefinition.BadArgs);
         model.QueueBind(c.BadQueueName, busOptions.DeadLetterExchange, c.BadRoutingKey, null);
+
+        // Make this consumer individually addressable for delayed/targeted delivery (IDelayedPublish),
+        // keyed by its naked queue name. Bind to the plugin exchange too when available.
+        model.QueueBind(c.QueueName, busOptions.DelayExchange, c.NakedQueueName, null);
+        if (busOptions.DelayedPluginAvailable)
+            model.QueueBind(c.QueueName, busOptions.DelayPluginExchange, c.NakedQueueName, null);
     }
 
     private void DeclareAndBindListener()

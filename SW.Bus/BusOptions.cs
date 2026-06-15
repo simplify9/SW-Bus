@@ -279,6 +279,54 @@ namespace SW.Bus
         public string DeadLetterExchange { get; }
 
         /// <summary>
+        /// Direct exchange used as the final router for delayed messages. Consumer queues are bound
+        /// to it by their naked queue name so a delayed message reaches exactly one consumer.
+        /// In the TTL-bucket strategy this is also the dead-letter target the buckets release to.
+        /// </summary>
+        public string DelayExchange => $"{versionPrefix}{environment}.delay".ToLower();
+
+        /// <summary>
+        /// The <c>x-delayed-message</c> exchange used when the RabbitMQ Delayed Message Exchange
+        /// plugin is available. Declared and bound only when <see cref="DelayedPluginAvailable"/> is true.
+        /// </summary>
+        public string DelayPluginExchange => $"{versionPrefix}{environment}.delay.x".ToLower();
+
+        /// <summary>
+        /// Gets whether the broker has the RabbitMQ Delayed Message Exchange plugin enabled.
+        /// Detected once at startup in <c>AddBus</c>. When false, delayed publishing falls back to TTL buckets.
+        /// </summary>
+        public bool DelayedPluginAvailable { get; internal set; }
+
+        /// <summary>
+        /// The set of delay-bucket durations (in seconds) used by the TTL-bucket fallback strategy.
+        /// A requested delay is rounded <em>up</em> to the nearest value in this ladder so that the number
+        /// of bucket queues stays bounded. Default: 1, 5, 15, 30, 60, 300, 900, 1800, 3600.
+        /// </summary>
+        public int[] DelayBucketsSeconds { get; set; } = { 1, 5, 15, 30, 60, 300, 900, 1800, 3600 };
+
+        /// <summary>
+        /// The fanout entry exchange for a given delay bucket. Publishing here preserves the original
+        /// routing key on the message so it survives the TTL queue and reaches the correct consumer on expiry.
+        /// </summary>
+        public string DelayBucketEntryExchange(int bucketSeconds) =>
+            $"{versionPrefix}{environment}.delay.in.{bucketSeconds}s".ToLower();
+
+        /// <summary>The TTL queue for a given delay bucket. Dead-letters to <see cref="DelayExchange"/> on expiry.</summary>
+        public string DelayBucketQueue(int bucketSeconds) =>
+            $"{versionPrefix}{environment}.delay.{bucketSeconds}s".ToLower();
+
+        /// <summary>Rounds a delay up to the nearest configured bucket (in seconds). Used by the TTL fallback.</summary>
+        public int ResolveDelayBucketSeconds(TimeSpan delay)
+        {
+            var seconds = (int)Math.Ceiling(delay.TotalSeconds);
+            foreach (var bucket in DelayBucketsSeconds)
+                if (bucket >= seconds)
+                    return bucket;
+            // Larger than the largest configured bucket: use the requested duration as its own bucket.
+            return Math.Max(seconds, 1);
+        }
+
+        /// <summary>
         /// Gets the environment name passed into the bus options constructor.
         /// </summary>
         public string EnvironmentName => environment;

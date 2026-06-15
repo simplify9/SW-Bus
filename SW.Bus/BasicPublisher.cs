@@ -14,28 +14,13 @@ using SW.PrimitiveTypes;
 
 namespace SW.Bus;
 
-internal class BasicPublisher
+internal class BasicPublisher(
+    IModel model,
+    BusOptions busOptions,
+    RequestContext requestContext,
+    IOperationalEventPublisher operationalEventPublisher,
+    BusMetrics metrics)
 {
-    private readonly IModel model;
-    private readonly BusOptions busOptions;
-    private readonly RequestContext requestContext;
-    private readonly IOperationalEventPublisher operationalEventPublisher;
-    private readonly BusMetrics metrics;
-
-    public BasicPublisher(
-        IModel model,
-        BusOptions busOptions,
-        RequestContext requestContext,
-        IOperationalEventPublisher operationalEventPublisher,
-        BusMetrics metrics)
-    {
-        this.model = model;
-        this.busOptions = busOptions;
-        this.requestContext = requestContext;
-        this.operationalEventPublisher = operationalEventPublisher;
-        this.metrics = metrics;
-    }
-
     async public Task Publish<TMessage>(TMessage message, string exchange, byte? priority = null)
     {
         var serializerOptions = new JsonSerializerOptions()
@@ -47,12 +32,13 @@ internal class BasicPublisher
         await Publish(message.GetType().Name, body,exchange, priority);
     }
 
-    public async Task Publish(string messageTypeName, string message,string exchange, byte? priority = null)
+    public async Task Publish(string messageTypeName, string message, string exchange, byte? priority = null,
+        string routingKeyOverride = null, IDictionary<string, object> extraHeaders = null)
     {
         try
         {
             var body = Encoding.UTF8.GetBytes(message);
-            await Publish(messageTypeName, body,exchange, priority);
+            await Publish(messageTypeName, body, exchange, priority, routingKeyOverride, extraHeaders);
         }
         catch (Exception e)
         {
@@ -61,8 +47,10 @@ internal class BasicPublisher
 
     }
 
-    public Task Publish(string messageTypeName, byte[] message,string exchange, byte? priority = null)
+    public Task Publish(string messageTypeName, byte[] message, string exchange, byte? priority = null,
+        string routingKeyOverride = null, IDictionary<string, object> extraHeaders = null)
     {
+        var routingKey = routingKeyOverride ?? messageTypeName.ToLower();
         var activity = BusDiagnostics.ActivitySource.StartActivity($"bus.publish {messageTypeName}", ActivityKind.Producer);
         var stopwatch = Stopwatch.StartNew();
 
@@ -104,6 +92,10 @@ internal class BasicPublisher
         props.Headers.Add(BusOptions.SourceNodeIdHeaderName,busOptions.NodeId);
         props.Headers.Add("Id", props.MessageId);
 
+        if (extraHeaders != null)
+            foreach (var header in extraHeaders)
+                props.Headers[header.Key] = header.Value;
+
         metrics.PublishStarted.Add(1);
         FireAndForget(new PublishStarted(
             DateTime.UtcNow,
@@ -125,7 +117,7 @@ internal class BasicPublisher
 
         try
         {
-            model.BasicPublish(exchange, messageTypeName.ToLower(), props, message);
+            model.BasicPublish(exchange, routingKey, props, message);
             stopwatch.Stop();
             activity?.SetTag("messaging.system", "rabbitmq");
             activity?.SetTag("messaging.destination.name", exchange);
