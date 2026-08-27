@@ -119,12 +119,21 @@ public class ConsumerReader : IConsumerReader
         var queues = await memoryCache.GetOrCreateAsync("queues", async entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(busOptions.MonitoringCacheSeconds);
-            var result = await managementClient.GetQueuesAsync(vhost.Name);
+            try
+            {
+                var result = await managementClient.GetQueuesAsync(vhost.Name);
 
-            // Update the timestamp on a successful fetch
-            lastUpdatedUtc = DateTime.UtcNow;
+                // Update the timestamp on a successful fetch
+                lastUpdatedUtc = DateTime.UtcNow;
 
-            return result;
+                return result;
+            }
+            catch
+            {
+                // Management API unreachable or misconfigured (e.g. missing/invalid credentials) -
+                // degrade to "no data" instead of failing every caller.
+                return Array.Empty<Queue>();
+            }
         });
 
         var queuesMap = queues.ToDictionary(q => q.Name, StringComparer.OrdinalIgnoreCase);
