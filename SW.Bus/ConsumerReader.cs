@@ -116,16 +116,26 @@ public class ConsumerReader : IConsumerReader
     /// <returns>An array of <see cref="ConsumerCount"/> objects containing statistics for each consumer.</returns>
     private async Task<ConsumerCount[]> GetConsumerCounts(IEnumerable<ConsumerDefinition> definitions)
     {
-        var queues = await memoryCache.GetOrCreateAsync("queues", async entry =>
+        // A failed fetch is deliberately not cached: caching it would report "no queues" for the
+        // rest of the cache window even after the management API recovers.
+        if (!memoryCache.TryGetValue("queues", out IReadOnlyList<Queue> queues))
         {
-            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(busOptions.MonitoringCacheSeconds);
-            var result = await managementClient.GetQueuesAsync(vhost.Name);
+            try
+            {
+                queues = await managementClient.GetQueuesAsync(vhost.Name);
 
-            // Update the timestamp on a successful fetch
-            lastUpdatedUtc = DateTime.UtcNow;
+                // Update the timestamp on a successful fetch
+                lastUpdatedUtc = DateTime.UtcNow;
 
-            return result;
-        });
+                memoryCache.Set("queues", queues, TimeSpan.FromSeconds(busOptions.MonitoringCacheSeconds));
+            }
+            catch
+            {
+                // Management API unreachable or misconfigured (e.g. missing/invalid credentials) -
+                // degrade to "no data" instead of failing every caller.
+                queues = Array.Empty<Queue>();
+            }
+        }
 
         var queuesMap = queues.ToDictionary(q => q.Name, StringComparer.OrdinalIgnoreCase);
 
