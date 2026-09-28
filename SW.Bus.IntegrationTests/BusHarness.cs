@@ -33,6 +33,7 @@ public sealed class BusHarness : IAsyncDisposable
             .ConfigureServices(services =>
             {
                 services.AddSingleton<MessageSink>();
+                services.AddSingleton<DynamicMessageTypes>();
                 services.AddScoped<RequestContext>();
                 services.AddBus(o => o.ApplicationName = "itest");
                 services.AddBusConsume(typeof(BusHarness).Assembly);
