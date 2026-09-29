@@ -246,16 +246,26 @@ internal class ConsumersService : IHostedService
         {
             // Cancel before closing: it also drops the consumer from the client's recovery records,
             // so a reconnect doesn't re-attach it.
-            if (open.model.IsOpen)
-            {
-                open.model.BasicCancel(open.consumerDefinition.ConsumerTag);
-                open.model.Close();
-            }
-            open.model.Dispose();
+            if (open.model.IsOpen) open.model.BasicCancel(open.consumerDefinition.ConsumerTag);
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, $"Failed to detach consumer {queueName}");
+            logger.LogWarning(ex, $"Failed to cancel consumer {queueName}");
+        }
+
+        // Closed whatever the cancel did: the entry is already gone, so no later refresh would
+        // retry, and closing the channel stops the consumer on its own.
+        try
+        {
+            if (open.model.IsOpen) open.model.Close();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, $"Failed to close the channel of consumer {queueName}");
+        }
+        finally
+        {
+            open.model.Dispose();
         }
     }
 
