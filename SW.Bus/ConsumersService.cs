@@ -237,6 +237,38 @@ internal class ConsumersService : IHostedService
         TryEmitQueueBackpressure(model, consumerDefinition);
     }
 
+    private void DetachConsumer(string queueName)
+    {
+        if (!openModels.TryRemove(queueName, out var open)) return;
+
+        logger.LogInformation($"Detaching removed consumer: {queueName}");
+        try
+        {
+            // Cancel before closing: it also drops the consumer from the client's recovery records,
+            // so a reconnect doesn't re-attach it.
+            if (open.model.IsOpen) open.model.BasicCancel(open.consumerDefinition.ConsumerTag);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, $"Failed to cancel consumer {queueName}");
+        }
+
+        // Closed whatever the cancel did: the entry is already gone, so no later refresh would
+        // retry, and closing the channel stops the consumer on its own.
+        try
+        {
+            if (open.model.IsOpen) open.model.Close();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, $"Failed to close the channel of consumer {queueName}");
+        }
+        finally
+        {
+            open.model.Dispose();
+        }
+    }
+
     private async Task RefreshConsumers()
     {
         // Lock to ensure we don't process multiple refresh requests simultaneously
@@ -301,8 +333,13 @@ internal class ConsumersService : IHostedService
                     AttachConsumer(def);
                 }
             }
-            
-            // Optional: Logic to remove consumers that are no longer in newDefinitions could go here
+
+            // 3. Detach consumers that are no longer defined (a dynamic consumer removed or renamed).
+            // Only the consumer stops; its queues, and whatever they still hold, are left for the
+            // application to decide about.
+            var defined = newDefinitions.Select(d => d.QueueName).ToHashSet();
+            foreach (var queueName in openModels.Keys.Where(q => !defined.Contains(q)).ToList())
+                DetachConsumer(queueName);
         }
         catch (Exception ex)
         {
