@@ -6,15 +6,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Ceiling for the reusable workflow's jobs: tag (contents: write), nuget
-# (packages: write), critical-vuln gate (security-events: read).
-permissions:
-  contents: write
-  packages: write
-  security-events: read
+# No token scopes by default. The Publish job grants the ceiling the reusable
+# workflow's jobs run under; each of its jobs narrows it further.
+permissions: {}
 
 jobs:
   Publish:
+    permissions:
+      contents: write         # tag job: create the git tag
+      packages: write         # nuget job: only used when pushing to a GitHub Packages feed
+      security-events: read   # critical-vuln gate job
     uses: simplify9/.github/.github/workflows/reusable-nuget-publish.yml@main
     with:
       nuget-projects: >-
@@ -23,7 +24,7 @@ jobs:
         SW.Bus.RabbitMqViewer/SW.Bus.RabbitMqViewer.csproj
       major-version: '8'
       minor-version: '1'
-      dotnet-version: '8.0.x'
+      dotnet-version: '10.0.x'   # current LTS SDK; projects still target net8.0
       run-tests: false
       test-projects: '**/*UnitTests/*.csproj'
     secrets:
