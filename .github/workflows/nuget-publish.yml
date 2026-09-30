@@ -22,9 +22,9 @@ jobs:
         SW.Bus/SW.Bus.csproj
         SW.Bus.RabbitMqExtensions/SW.Bus.RabbitMqExtensions.csproj
         SW.Bus.RabbitMqViewer/SW.Bus.RabbitMqViewer.csproj
-      major-version: '8'
-      minor-version: '1'
-      dotnet-version: '10.0.x'   # current LTS SDK; projects still target net8.0
+      major-version: '10'
+      minor-version: '0'
+      dotnet-version: '10.0.x'
       run-tests: false
       test-projects: '**/*UnitTests/*.csproj'
     secrets:

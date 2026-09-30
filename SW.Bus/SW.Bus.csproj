@@ -1,15 +1,15 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>net8.0</TargetFramework>
+        <TargetFramework>net10.0</TargetFramework>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
-        <AssemblyVersion>8.0.0.0</AssemblyVersion>
+        <AssemblyVersion>10.0.0.0</AssemblyVersion>
         <NoWarn>$(NoWarn);1591</NoWarn> <!-- Suppress warnings for missing XML docs -->
         <PackageId>SimplyWorks.Bus</PackageId>
         <Product>SimplyWorks.Bus</Product>
         <Authors>Simplify9</Authors>
-        <Description>A lightweight .NET 8 message bus library built on RabbitMQ for ASP.NET Core applications. Provides simple publish-subscribe patterns, typed consumers, broadcasting, automatic retries, and JWT integration. Visit GitHub for full documentation and examples.</Description>
-        <PackageTags>messagebus;rabbitmq;aspnetcore;messaging;pubsub;eventdriven;microservices;dotnet8</PackageTags>
+        <Description>A lightweight .NET 10 message bus library built on RabbitMQ for ASP.NET Core applications. Provides simple publish-subscribe patterns, typed consumers, broadcasting, automatic retries, and JWT integration. Visit GitHub for full documentation and examples.</Description>
+        <PackageTags>messagebus;rabbitmq;aspnetcore;messaging;pubsub;eventdriven;microservices;dotnet10</PackageTags>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageProjectUrl>https://github.com/simplify9/SW-Bus</PackageProjectUrl>
         <RepositoryUrl>https://github.com/simplify9/SW-Bus</RepositoryUrl>

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**SimplyWorks.Bus** is a production-grade .NET 8 message bus library for ASP.NET Core microservices, built on RabbitMQ. It is distributed as three NuGet packages:
+**SimplyWorks.Bus** is a production-grade .NET 10 message bus library for ASP.NET Core microservices, built on RabbitMQ. It is distributed as three NuGet packages:
 
 - **SimplyWorks.Bus** — core runtime (publishing, consuming, retries, dead-letter routing, OpenTelemetry)
 - **SimplyWorks.Bus.RabbitMqExtensions** — public contracts and monitoring interfaces (no `RabbitMQ.Client` dependency)

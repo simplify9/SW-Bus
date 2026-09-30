@@ -6,7 +6,7 @@
 [![NuGet](https://img.shields.io/nuget/v/SimplyWorks.Bus.RabbitMqViewer.svg?label=RabbitMqViewer)](https://www.nuget.org/packages/SimplyWorks.Bus.RabbitMqViewer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A lightweight .NET 8 message bus library built on top of RabbitMQ, designed for event-driven microservice architectures in ASP.NET Core.
+A lightweight .NET 10 message bus library built on top of RabbitMQ, designed for event-driven microservice architectures in ASP.NET Core.
 
 The library ships as three complementary NuGet packages:
 
