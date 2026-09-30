@@ -1,8 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>net8.0</TargetFramework>
-        <AssemblyVersion>8.0.0.0</AssemblyVersion>
+        <TargetFramework>net10.0</TargetFramework>
+        <AssemblyVersion>10.0.0.0</AssemblyVersion>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <NoWarn>$(NoWarn);1591</NoWarn> <!-- Suppress warnings for missing XML docs -->
         <ImplicitUsings>enable</ImplicitUsings>
@@ -11,7 +11,7 @@
         <Product>SimplyWorks.Bus.RabbitMqExtensions</Product>
         <Authors>Simplify9</Authors>
         <Description>Extensions for SimplyWorks.Bus library to support RabbitMQ specific features.</Description>
-        <PackageTags>messagebus;rabbitmq;aspnetcore;messaging;pubsub;eventdriven;microservices;dotnet8</PackageTags>
+        <PackageTags>messagebus;rabbitmq;aspnetcore;messaging;pubsub;eventdriven;microservices;dotnet10</PackageTags>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageProjectUrl>https://github.com/simplify9/SW-Bus</PackageProjectUrl>
         <RepositoryUrl>https://github.com/simplify9/SW-Bus</RepositoryUrl>
@@ -27,7 +27,7 @@
         <None Include="..\icon.png" Pack="true" PackagePath="\" />
     </ItemGroup>
     <ItemGroup>
-      <PackageReference Include="SimplyWorks.PrimitiveTypes" Version="8.1.3" />
+      <PackageReference Include="SimplyWorks.PrimitiveTypes" Version="10.0.0" />
     </ItemGroup>
 
 </Project>

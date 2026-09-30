@@ -10,7 +10,7 @@ namespace SW.Bus.IntegrationTests;
 
 /// <summary>
 /// Boots a real generic host wired with AddBus/AddBusConsume/AddBusPublish against a given RabbitMQ
-/// connection string, then waits for consumer topology to settle so delayed messages have somewhere to land.
+/// connection string, then waits for consumer topology to settle.
 /// </summary>
 public sealed class BusHarness : IAsyncDisposable
 {
@@ -19,7 +19,6 @@ public sealed class BusHarness : IAsyncDisposable
     private BusHarness(IHost host) => this.host = host;
 
     public IServiceProvider Services => host.Services;
-    public MessageSink Sink => host.Services.GetRequiredService<MessageSink>();
     public BusOptions Options => host.Services.GetRequiredService<BusOptions>();
 
     public static async Task<BusHarness> StartAsync(string amqpConnectionString)
@@ -32,7 +31,6 @@ public sealed class BusHarness : IAsyncDisposable
             }))
             .ConfigureServices(services =>
             {
-                services.AddSingleton<MessageSink>();
                 services.AddSingleton<DynamicMessageTypes>();
                 services.AddScoped<RequestContext>();
                 services.AddBus(o => o.ApplicationName = "itest");
@@ -44,7 +42,7 @@ public sealed class BusHarness : IAsyncDisposable
         await host.StartAsync();
 
         // ConsumersService attaches topology on a background task; give it time to declare and bind
-        // the consumer queue to the delay exchange before any delayed message is published.
+        // the consumer queues before the test touches them.
         await Task.Delay(TimeSpan.FromSeconds(4));
         return new BusHarness(host);
     }

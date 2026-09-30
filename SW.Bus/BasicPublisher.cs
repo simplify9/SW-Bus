@@ -32,13 +32,12 @@ internal class BasicPublisher(
         await Publish(message.GetType().Name, body,exchange, priority);
     }
 
-    public async Task Publish(string messageTypeName, string message, string exchange, byte? priority = null,
-        string routingKeyOverride = null, IDictionary<string, object> extraHeaders = null)
+    public async Task Publish(string messageTypeName, string message, string exchange, byte? priority = null)
     {
         try
         {
             var body = Encoding.UTF8.GetBytes(message);
-            await Publish(messageTypeName, body, exchange, priority, routingKeyOverride, extraHeaders);
+            await Publish(messageTypeName, body, exchange, priority);
         }
         catch (Exception e)
         {
@@ -47,10 +46,8 @@ internal class BasicPublisher(
 
     }
 
-    public Task Publish(string messageTypeName, byte[] message, string exchange, byte? priority = null,
-        string routingKeyOverride = null, IDictionary<string, object> extraHeaders = null)
+    public Task Publish(string messageTypeName, byte[] message, string exchange, byte? priority = null)
     {
-        var routingKey = routingKeyOverride ?? messageTypeName.ToLower();
         var activity = BusDiagnostics.ActivitySource.StartActivity($"bus.publish {messageTypeName}", ActivityKind.Producer);
         var stopwatch = Stopwatch.StartNew();
 
@@ -92,10 +89,6 @@ internal class BasicPublisher(
         props.Headers.Add(BusOptions.SourceNodeIdHeaderName,busOptions.NodeId);
         props.Headers.Add("Id", props.MessageId);
 
-        if (extraHeaders != null)
-            foreach (var header in extraHeaders)
-                props.Headers[header.Key] = header.Value;
-
         metrics.PublishStarted.Add(1);
         FireAndForget(new PublishStarted(
             DateTime.UtcNow,
@@ -117,7 +110,7 @@ internal class BasicPublisher(
 
         try
         {
-            model.BasicPublish(exchange, routingKey, props, message);
+            model.BasicPublish(exchange, messageTypeName.ToLower(), props, message);
             stopwatch.Stop();
             activity?.SetTag("messaging.system", "rabbitmq");
             activity?.SetTag("messaging.destination.name", exchange);
