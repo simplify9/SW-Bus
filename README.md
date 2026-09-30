@@ -1145,7 +1145,7 @@ Both test classes share the same scenario logic in `DelayedDeliveryScenario.RunA
 | `EasyNetQ.Management.Client` | 3.0.1 | RabbitMQ Management API calls |
 | `Scrutor` | 4.2.2 | Assembly scanning for consumers |
 | `SimplyWorks.HttpExtensions` | 8.1.1 | JWT and request context propagation |
-| `SimplyWorks.PrimitiveTypes` | 8.1.3 | `RequestContext`, `IConsume<T>`, etc. |
+| `SimplyWorks.PrimitiveTypes` | 10.0.0 | `RequestContext`, `IConsume<T>`, etc. |
 
 ---
 
