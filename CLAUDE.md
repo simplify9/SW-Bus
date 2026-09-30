@@ -47,7 +47,7 @@ NuGet packages are published automatically via GitHub Actions on push to `main`.
 | `SW.Bus.RabbitMqViewer` | Optional Razor Pages dashboard mounted at `/bus-viewer` |
 | `SW.Bus.SampleWeb` | Demo application showing all patterns |
 | `SW.Bus.UnitTests` | MSTest integration tests using `TestHost` |
-| `SW.Bus.IntegrationTests` | MSTest + Testcontainers; boots real RabbitMQ in Docker (with and without the delayed-message plugin) |
+| `SW.Bus.IntegrationTests` | MSTest + Testcontainers; boots real RabbitMQ in Docker |
 
 ### Consumer Lifecycle
 
