@@ -406,20 +406,22 @@ namespace SW.Bus
         /// </summary>
         /// <remarks>
         /// A name the bus already sets is skipped rather than added twice, so a reader asking for
-        /// <c>RemainingRetries</c> still gets the bus's answer. A header that cannot be read gives
-        /// none: the message itself is still good, and failing it would only send it to retry.
+        /// <c>RemainingRetries</c> still gets the bus's answer. A header that cannot be read — another
+        /// publisher's, null or not text — gives none: the message itself is still good, and failing
+        /// it would only send it to retry.
         /// </remarks>
         List<RequestValue> ReadPublishedValues(IBasicProperties basicProperties, params RequestValue[] reserved)
         {
             var values = new List<RequestValue>();
             if (basicProperties.Headers == null ||
-                !basicProperties.Headers.TryGetValue(RequestContext.ValuesHeaderName, out var valuesBytes))
+                !basicProperties.Headers.TryGetValue(RequestContext.ValuesHeaderName, out var header) ||
+                header is not byte[] valuesBytes)
                 return values;
 
             try
             {
                 var published = JsonSerializer.Deserialize<Dictionary<string, string>>(
-                    Encoding.UTF8.GetString((byte[])valuesBytes));
+                    Encoding.UTF8.GetString(valuesBytes));
                 foreach (var (name, value) in published ?? new Dictionary<string, string>())
                 {
                     if (value == null || reserved.Any(r =>
@@ -428,7 +430,7 @@ namespace SW.Bus
                     values.Add(new RequestValue(name, value, RequestValueType.ServiceBusValue));
                 }
             }
-            catch (Exception ex) when (ex is JsonException or InvalidCastException)
+            catch (JsonException ex)
             {
                 logger.LogWarning(ex, "The published values of a message could not be read; it is processed without them.");
             }

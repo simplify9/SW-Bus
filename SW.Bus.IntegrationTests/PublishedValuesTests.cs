@@ -54,10 +54,27 @@ public class PublishedValuesTests
         Assert.IsTrue(await Eventually(() => received.Messages.Count == 2), "The messages never arrived.");
         var withValues = received.Messages.Single(m => m.ContainsKey("source"));
         Assert.AreEqual("{\"order\":\"SO-1\"}", withValues["source"]);
-        Assert.AreNotEqual("99", withValues["RemainingRetries"]);
+        Assert.AreEqual(harness.Options.DefaultRetryCount.ToString(), withValues["RemainingRetries"]);
 
         // A plain publish carries nothing of the kind.
         Assert.AreEqual(1, received.Messages.Count(m => !m.ContainsKey("source")));
+    }
+
+    [TestMethod]
+    public async Task Values_too_large_for_a_frame_are_refused_before_anything_is_sent()
+    {
+        await using var harness = await BusHarness.StartAsync(_container.GetConnectionString());
+        await using var scope = harness.Services.CreateAsyncScope();
+        var publish = scope.ServiceProvider.GetRequiredService<IPublishWithValues>();
+
+        await Assert.ThrowsExceptionAsync<ArgumentException>(() => publish.Publish("carried", "{}",
+            new Dictionary<string, string> { ["big"] = new string('x', IPublishWithValues.MaxValuesBytes) }));
+
+        // The channel every publish shares is still open.
+        await publish.Publish("carried", "{}", new Dictionary<string, string> { ["small"] = "1" });
+        var received = harness.Services.GetRequiredService<ReceivedValues>();
+        Assert.IsTrue(await Eventually(() => received.Messages.Any(m => m.ContainsKey("small"))),
+            "A publish after the refused one never arrived.");
     }
 
     private static async Task<bool> Eventually(Func<bool> condition)

@@ -22,6 +22,8 @@ namespace SW.Bus
         public Task Publish(string messageTypeName, byte[] message) =>
             basicPublisher.Publish(messageTypeName, message, exchange);
         public Task Publish(string messageTypeName, string message, IReadOnlyDictionary<string, string> values) =>
-            basicPublisher.Publish(messageTypeName, message, exchange, values: values);
+            // Outside the publisher's own try: a caller handing too much should get the
+            // ArgumentException, not a publish failure wrapped around it.
+            basicPublisher.Publish(messageTypeName, message, exchange, valuesHeader: PublishedValues.ToHeader(values));
     }
 }

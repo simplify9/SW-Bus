@@ -29,6 +29,8 @@ namespace SW.Bus
 
         public Task Publish(string messageTypeName, string message, IReadOnlyDictionary<string, string> values)
         {
+            // Refuses what the real publisher refuses, so a test cannot pass on values production would not send.
+            PublishedValues.ToHeader(values);
             logger.LogInformation("mock published...");
             return Task.CompletedTask;
         }

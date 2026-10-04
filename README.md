@@ -148,7 +148,9 @@ await _publishWithValues.Publish("OrderCreated", jsonPayload,
     new Dictionary<string, string> { ["source"] = "erp" });
 ```
 
-They travel in one `request-context-values` header and reach the consumer as `ServiceBusValue` request values (see [Accessing request context](#accessing-request-context)). A value named after one the bus sets itself, such as `RemainingRetries`, is not delivered.
+They travel in one `request-context-values` header and reach the consumer as `ServiceBusValue` request values (see [Accessing request context](#accessing-request-context)). A value named after one the bus sets itself, such as `RemainingRetries`, is not delivered. Together they may come to at most 64 KB as JSON (`IPublishWithValues.MaxValuesBytes`); more throws `ArgumentException` before anything is sent.
+
+> **Never put a secret in a value.** Headers are readable by anything that can read the queue, and a message that fails for good keeps them in its dead-letter queue, which the error-queue API returns.
 
 ---
 
