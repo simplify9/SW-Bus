@@ -368,6 +368,8 @@ namespace SW.Bus
             }
             
             var requestContext = serviceProvider.GetService<RequestContext>();
+            var publishedValues = ReadPublishedValues(basicProperties,
+                remainingRetriesValue, messageTypeValue, sourceNodeIdValue);
 
             if (requestContext == null || !busOptions.Token.IsValid || basicProperties.Headers == null ||
                 !basicProperties.Headers.TryGetValue(RequestContext.UserHeaderName, out var userHeaderBytes))
@@ -375,6 +377,7 @@ namespace SW.Bus
                 requestContext?.AddValue(remainingRetriesValue);
                 requestContext?.AddValue(messageTypeValue);
                 if (sourceNodeIdValue != null) requestContext?.AddValue(sourceNodeIdValue);
+                foreach (var value in publishedValues) requestContext?.AddValue(value);
                 return;
             };
 
@@ -392,8 +395,45 @@ namespace SW.Bus
             
             if (sourceNodeIdValue !=null)
                 requestValues.Add(sourceNodeIdValue);
+
+            requestValues.AddRange(publishedValues);
             
             requestContext.Set(user, requestValues, correlationHeader);
+        }
+
+        /// <summary>
+        /// The values the publisher sent beside the body (<see cref="IPublishWithValues"/>), as request values.
+        /// </summary>
+        /// <remarks>
+        /// A name the bus already sets is skipped rather than added twice, so a reader asking for
+        /// <c>RemainingRetries</c> still gets the bus's answer. A header that cannot be read gives
+        /// none: the message itself is still good, and failing it would only send it to retry.
+        /// </remarks>
+        List<RequestValue> ReadPublishedValues(IBasicProperties basicProperties, params RequestValue[] reserved)
+        {
+            var values = new List<RequestValue>();
+            if (basicProperties.Headers == null ||
+                !basicProperties.Headers.TryGetValue(RequestContext.ValuesHeaderName, out var valuesBytes))
+                return values;
+
+            try
+            {
+                var published = JsonSerializer.Deserialize<Dictionary<string, string>>(
+                    Encoding.UTF8.GetString((byte[])valuesBytes));
+                foreach (var (name, value) in published ?? new Dictionary<string, string>())
+                {
+                    if (value == null || reserved.Any(r =>
+                            r != null && r.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+                    values.Add(new RequestValue(name, value, RequestValueType.ServiceBusValue));
+                }
+            }
+            catch (Exception ex) when (ex is JsonException or InvalidCastException)
+            {
+                logger.LogWarning(ex, "The published values of a message could not be read; it is processed without them.");
+            }
+
+            return values;
         }
 
         

@@ -100,7 +100,7 @@ services.AddBus(config =>
     config.Token.Audience = Configuration["Token:Audience"];
 });
 
-services.AddBusPublish();  // registers IPublish, IBroadcast
+services.AddBusPublish();  // registers IPublish, IPublishWithValues, IBroadcast
 services.AddBusConsume();  // registers IHostedService consumer + scans calling assembly
 ```
 
@@ -140,6 +140,15 @@ String-based publish (useful for dynamic routing):
 await _publish.Publish("OrderCreated", jsonPayload);
 await _publish.Publish("OrderCreated", payloadBytes);
 ```
+
+Values beside the body, when the body is not yours to change (`IPublishWithValues`):
+
+```csharp
+await _publishWithValues.Publish("OrderCreated", jsonPayload,
+    new Dictionary<string, string> { ["source"] = "erp" });
+```
+
+They travel in one `request-context-values` header and reach the consumer as `ServiceBusValue` request values (see [Accessing request context](#accessing-request-context)). A value named after one the bus sets itself, such as `RemainingRetries`, is not delivered.
 
 ---
 
@@ -194,6 +203,7 @@ public class SecureConsumer : IConsume<SecureMessage>
         var user          = _ctx.User;
         var correlationId = _ctx.CorrelationId;
         var remaining     = _ctx.GetValue("RemainingRetries");
+        var source        = _ctx.GetValueOf("source", RequestValueType.ServiceBusValue); // IPublishWithValues
     }
 }
 ```
