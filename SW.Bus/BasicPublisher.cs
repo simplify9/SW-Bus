@@ -32,12 +32,13 @@ internal class BasicPublisher(
         await Publish(message.GetType().Name, body,exchange, priority);
     }
 
-    public async Task Publish(string messageTypeName, string message, string exchange, byte? priority = null)
+    public async Task Publish(string messageTypeName, string message, string exchange, byte? priority = null,
+        string valuesHeader = null)
     {
         try
         {
             var body = Encoding.UTF8.GetBytes(message);
-            await Publish(messageTypeName, body, exchange, priority);
+            await Publish(messageTypeName, body, exchange, priority, valuesHeader);
         }
         catch (Exception e)
         {
@@ -46,7 +47,9 @@ internal class BasicPublisher(
 
     }
 
-    public Task Publish(string messageTypeName, byte[] message, string exchange, byte? priority = null)
+    /// <param name="valuesHeader">Written by <see cref="PublishedValues.ToHeader"/>, which also checks its size.</param>
+    public Task Publish(string messageTypeName, byte[] message, string exchange, byte? priority = null,
+        string valuesHeader = null)
     {
         var activity = BusDiagnostics.ActivitySource.StartActivity($"bus.publish {messageTypeName}", ActivityKind.Producer);
         var stopwatch = Stopwatch.StartNew();
@@ -85,6 +88,11 @@ internal class BasicPublisher(
             if (activity.ParentId != null)
                 props.Headers[OperationalEventEnvelope.CausationIdHeader] = activity.ParentSpanId.ToString();
         }
+
+        // One header for all of them, under the name RequestContext already reserves for it, so a
+        // value cannot collide with a header the bus itself sets.
+        if (valuesHeader != null)
+            props.Headers[RequestContext.ValuesHeaderName] = valuesHeader;
 
         props.Headers.Add(BusOptions.SourceNodeIdHeaderName,busOptions.NodeId);
         props.Headers.Add("Id", props.MessageId);

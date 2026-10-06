@@ -150,9 +150,11 @@ namespace SW.Bus
                 serviceProvider.GetRequiredService<RequestContext>(),
                 serviceProvider.GetRequiredService<IOperationalEventPublisher>(),
                 serviceProvider.GetRequiredService<BusMetrics>()))
-            .AddScoped<IPublish, Publisher>(serviceProvider => new Publisher(
+            .AddScoped(serviceProvider => new Publisher(
                 serviceProvider.GetRequiredService<BasicPublisher>(),
                 busOptions.ProcessExchange))
+            .AddScoped<IPublish>(serviceProvider => serviceProvider.GetRequiredService<Publisher>())
+            .AddScoped<IPublishWithValues>(serviceProvider => serviceProvider.GetRequiredService<Publisher>())
             .AddScoped<IBroadcast, Broadcaster>(serviceProvider => new Broadcaster(
                 serviceProvider.GetRequiredService<BasicPublisher>(),
                 busOptions.NodeExchange, busOptions.NodeRoutingKey));
@@ -167,7 +169,9 @@ namespace SW.Bus
         /// <returns>The <see cref="IServiceCollection"/> for chaining.</returns>
         public static IServiceCollection AddBusPublishMock(this IServiceCollection services)
         {
-            services.AddScoped<IPublish, MockPublisher>();
+            services.AddScoped<MockPublisher>();
+            services.AddScoped<IPublish>(serviceProvider => serviceProvider.GetRequiredService<MockPublisher>());
+            services.AddScoped<IPublishWithValues>(serviceProvider => serviceProvider.GetRequiredService<MockPublisher>());
             return services;
         }
 

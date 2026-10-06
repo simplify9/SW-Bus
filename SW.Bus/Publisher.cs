@@ -1,11 +1,12 @@
-﻿using RabbitMQ.Client;
+﻿using System.Collections.Generic;
+using RabbitMQ.Client;
 using SW.PrimitiveTypes;
 using System.Threading.Tasks;
 using SW.Bus.RabbitMqExtensions;
 
 namespace SW.Bus
 {
-    internal class Publisher : IPublish
+    internal class Publisher : IPublish, IPublishWithValues
     {
         private readonly BasicPublisher basicPublisher;
         private readonly string exchange;
@@ -20,5 +21,9 @@ namespace SW.Bus
             basicPublisher.Publish(messageTypeName, message, exchange);
         public Task Publish(string messageTypeName, byte[] message) =>
             basicPublisher.Publish(messageTypeName, message, exchange);
+        public Task Publish(string messageTypeName, string message, IReadOnlyDictionary<string, string> values) =>
+            // Outside the publisher's own try: a caller handing too much should get the
+            // ArgumentException, not a publish failure wrapped around it.
+            basicPublisher.Publish(messageTypeName, message, exchange, valuesHeader: PublishedValues.ToHeader(values));
     }
 }
