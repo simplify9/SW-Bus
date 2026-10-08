@@ -21,7 +21,7 @@ public sealed class BusHarness : IAsyncDisposable
     public IServiceProvider Services => host.Services;
     public BusOptions Options => host.Services.GetRequiredService<BusOptions>();
 
-    public static async Task<BusHarness> StartAsync(string amqpConnectionString)
+    public static async Task<BusHarness> StartAsync(string amqpConnectionString, Action<BusOptions>? configure = null)
     {
         var host = Host.CreateDefaultBuilder()
             .UseEnvironment("itest")
@@ -34,7 +34,11 @@ public sealed class BusHarness : IAsyncDisposable
                 services.AddSingleton<DynamicMessageTypes>();
                 services.AddSingleton<ReceivedValues>();
                 services.AddScoped<RequestContext>();
-                services.AddBus(o => o.ApplicationName = "itest");
+                services.AddBus(o =>
+                {
+                    o.ApplicationName = "itest";
+                    configure?.Invoke(o);
+                });
                 services.AddBusConsume(typeof(BusHarness).Assembly);
                 services.AddBusPublish();
             })

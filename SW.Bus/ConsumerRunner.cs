@@ -189,11 +189,11 @@ namespace SW.Bus
                 }
                 else
                 {
-                    model.BasicAck(ea.DeliveryTag, false);
                     logger.LogError(ex,
                         @$"Failed to process message '{consumerDefinition.MessageTypeName}', in '{consumerDefinition.ServiceType.Name}'. Message {message}, Total retries {consumerDefinition.RetryCount}");
 
-                    await PublishBad(model, ea.Body, ea.BasicProperties, busOptions.DeadLetterExchange, consumerDefinition.BadRoutingKey, ex);
+                    if (!MoveToBad(model, ea, busOptions.DeadLetterExchange, consumerDefinition.BadRoutingKey, ex))
+                        return;
                     metrics.DeadLetterMoved.Add(1);
                     FireAndForget(new MessageMovedToDeadLetter(
                         DateTime.UtcNow,
@@ -301,14 +301,13 @@ namespace SW.Bus
                 }
                 else
                 {
-                    model.BasicAck(ea.DeliveryTag, false);
                     logger.LogError(ex,
                         @$"Failed to process message '{listenerDefinition?.MessageTypeName} ?? ?? message', in 
                         '{listenerDefinition?.ServiceType.Name ?? "reloading"}'. 
                            Message {message}, Total retries {busOptions.ListenRetryCount}");
 
-                    await PublishBad(model, ea.Body, ea.BasicProperties,busOptions.NodeDeadLetterExchange, busOptions.NodeBadRoutingKey, ex);
-                    metrics.DeadLetterMoved.Add(1);
+                    if (MoveToBad(model, ea, busOptions.NodeDeadLetterExchange, busOptions.NodeBadRoutingKey, ex))
+                        metrics.DeadLetterMoved.Add(1);
                     await RunOnFail(svc, failMethod, ex, message);
                 }
 
@@ -439,7 +438,56 @@ namespace SW.Bus
         }
 
         
-        private Task PublishBad(IModel model, ReadOnlyMemory<byte> body, IBasicProperties messageProps, 
+        /// <summary>
+        /// Parks a message that has used up its retries in the bad queue, and only then acknowledges it.
+        /// </summary>
+        /// <remarks>
+        /// The acknowledgement used to come first, and the exception header was written with
+        /// System.Text.Json, which cannot serialize any thrown exception (its TargetSite is a
+        /// MethodBase). The publish therefore always threw after the message was acknowledged, and
+        /// every message that ran out of retries was lost instead of reaching the bad queue. Should
+        /// the publish still fail, the message is rejected instead: it goes round the retry queue
+        /// and is tried again, rather than being dropped.
+        /// </remarks>
+        /// <returns>Whether the message is now in the bad queue.</returns>
+        private bool MoveToBad(IModel model, BasicDeliverEventArgs ea, string exchange, string routingKey,
+            Exception ex)
+        {
+            try
+            {
+                PublishBad(model, ea.Body, ea.BasicProperties, exchange, routingKey, ex);
+            }
+            catch (Exception publishError)
+            {
+                logger.LogError(publishError,
+                    "Could not move a failed message to {Exchange}/{RoutingKey}; it is rejected to be retried instead.",
+                    exchange, routingKey);
+                model.BasicReject(ea.DeliveryTag, false);
+                return false;
+            }
+
+            model.BasicAck(ea.DeliveryTag, false);
+            return true;
+        }
+
+        /// <summary>
+        /// The exception as the bad queue's header records it: what a person reading the queue needs,
+        /// in the field names the header had before System.Text.Json, which serializes every one.
+        /// </summary>
+        internal static string ExceptionHeader(Exception ex) =>
+            JsonSerializer.Serialize(ExceptionRecord(ex));
+
+        private static Dictionary<string, object> ExceptionRecord(Exception ex) => new()
+        {
+            ["ClassName"] = ex.GetType().FullName,
+            ["Message"] = ex.Message,
+            ["Source"] = ex.Source,
+            ["HResult"] = ex.HResult,
+            ["StackTraceString"] = ex.StackTrace,
+            ["InnerException"] = ex.InnerException is null ? null : ExceptionRecord(ex.InnerException),
+        };
+
+        private static void PublishBad(IModel model, ReadOnlyMemory<byte> body, IBasicProperties messageProps,
             string exchange, string routingKey, Exception ex)
         {
             const string exception = "exception";
@@ -454,12 +502,10 @@ namespace SW.Bus
             // total bad is used in case the message was moved from bad to process (using shovel) and failed again. so we keep history of failures
             var totalBad = props.Headers.Count(c => c.Key.StartsWith(exception)) + 1;
 
-            props.Headers.Add($"{exception}{totalBad}", JsonSerializer.Serialize(ex,ex.GetType()));
+            props.Headers.Add($"{exception}{totalBad}", ExceptionHeader(ex));
 
             props.DeliveryMode = 2;
             model.BasicPublish(exchange, routingKey, props, body);
-
-            return Task.CompletedTask;
         }
 
         private void FireAndForget(IOperationalEvent evt)
