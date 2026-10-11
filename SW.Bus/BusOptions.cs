@@ -341,6 +341,12 @@ namespace SW.Bus
         /// Log a warning and process the message with no user, as if it had been published without one.
         /// Only for consumers whose handlers do not depend on the caller's identity.
         /// </summary>
-        ContinueAnonymous = 1
+        ContinueAnonymous = 1,
+
+        /// <summary>
+        /// Same as <see cref="ContinueAnonymous"/> but without the warning log, for consumers where the
+        /// mismatch is expected and the log would only be noise.
+        /// </summary>
+        ContinueAnonymousSilently = 2
     }
 }

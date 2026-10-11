@@ -389,12 +389,14 @@ namespace SW.Bus
             }
             catch (Exception ex)
             {
-                if (busOptions.OnInvalidUserToken != InvalidUserTokenBehavior.ContinueAnonymous)
+                if (busOptions.OnInvalidUserToken is not (InvalidUserTokenBehavior.ContinueAnonymous
+                    or InvalidUserTokenBehavior.ContinueAnonymousSilently))
                     throw new InvalidUserTokenException(messageName, ex);
 
-                logger.LogWarning(ex,
-                    "The user token of a '{MessageName}' message could not be validated; it is processed without a user.",
-                    messageName);
+                if (busOptions.OnInvalidUserToken == InvalidUserTokenBehavior.ContinueAnonymous)
+                    logger.LogWarning(ex,
+                        "The user token of a '{MessageName}' message could not be validated; it is processed without a user.",
+                        messageName);
                 requestContext.AddValue(remainingRetriesValue);
                 requestContext.AddValue(messageTypeValue);
                 if (sourceNodeIdValue != null) requestContext.AddValue(sourceNodeIdValue);
