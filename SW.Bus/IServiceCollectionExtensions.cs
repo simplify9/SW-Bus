@@ -35,6 +35,18 @@ namespace SW.Bus
 
             var busOptions = new BusOptions(envName);
 
+            // from configuration (e.g. env var Bus__OnInvalidUserToken); the configure callback below overrides it
+            var onInvalidUserToken = configuration["Bus:OnInvalidUserToken"];
+            if (!string.IsNullOrWhiteSpace(onInvalidUserToken))
+            {
+                if (!Enum.TryParse(onInvalidUserToken.Trim(), true, out InvalidUserTokenBehavior behavior) ||
+                    !Enum.IsDefined(behavior))
+                    throw new BusException(
+                        $"'Bus:OnInvalidUserToken' value '{onInvalidUserToken}' is not valid. " +
+                        $"Use one of: {string.Join(", ", Enum.GetNames<InvalidUserTokenBehavior>())}.");
+                busOptions.OnInvalidUserToken = behavior;
+            }
+
             configure?.Invoke(busOptions);
 
             services.AddSingleton(busOptions);
