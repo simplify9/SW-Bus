@@ -158,7 +158,7 @@ namespace SW.Bus
                     ex.StackTrace,
                     payloadSizeBytes));
 
-                if (remainingRetryCount != 0)
+                if (remainingRetryCount != 0 && ex is not InvalidUserTokenException)
                 {
                     // reject the message, will be sent to wait queue
                     model.BasicReject(ea.DeliveryTag, false);
@@ -286,7 +286,7 @@ namespace SW.Bus
             {
                 stopwatch.Stop();
                 metrics.ProcessingFailed.Add(1);
-                if (remainingRetryCount != 0)
+                if (remainingRetryCount != 0 && ex is not InvalidUserTokenException)
                 {
                     // reject the message, will be sent to wait queue
                     model.BasicReject(ea.DeliveryTag, false);
@@ -382,7 +382,27 @@ namespace SW.Bus
             };
 
             var userHeader = Encoding.UTF8.GetString((byte[])userHeaderBytes);
-            var user = busOptions.Token.ReadJwt(userHeader);
+            System.Security.Claims.ClaimsPrincipal user;
+            try
+            {
+                user = busOptions.Token.ReadJwt(userHeader);
+            }
+            catch (Exception ex)
+            {
+                if (busOptions.OnInvalidUserToken is not (InvalidUserTokenBehavior.ContinueAnonymous
+                    or InvalidUserTokenBehavior.ContinueAnonymousSilently))
+                    throw new InvalidUserTokenException(messageName, ex);
+
+                if (busOptions.OnInvalidUserToken == InvalidUserTokenBehavior.ContinueAnonymous)
+                    logger.LogWarning(ex,
+                        "The user token of a '{MessageName}' message could not be validated; it is processed without a user.",
+                        messageName);
+                requestContext.AddValue(remainingRetriesValue);
+                requestContext.AddValue(messageTypeValue);
+                if (sourceNodeIdValue != null) requestContext.AddValue(sourceNodeIdValue);
+                foreach (var value in publishedValues) requestContext.AddValue(value);
+                return;
+            }
 
             string correlationHeader = null;
             if (basicProperties.Headers.TryGetValue(RequestContext.CorrelationIdHeaderName,
@@ -454,12 +474,26 @@ namespace SW.Bus
             // total bad is used in case the message was moved from bad to process (using shovel) and failed again. so we keep history of failures
             var totalBad = props.Headers.Count(c => c.Key.StartsWith(exception)) + 1;
 
-            props.Headers.Add($"{exception}{totalBad}", JsonSerializer.Serialize(ex,ex.GetType()));
+            props.Headers.Add($"{exception}{totalBad}", SerializeException(ex));
 
             props.DeliveryMode = 2;
             model.BasicPublish(exchange, routingKey, props, body);
 
             return Task.CompletedTask;
+        }
+
+        // some exceptions (thrown ones carry a TargetSite) are not serializable; the message is already
+        // acked by now, so a throw here would lose it instead of dead-lettering it
+        private static string SerializeException(Exception ex)
+        {
+            try
+            {
+                return JsonSerializer.Serialize(ex, ex.GetType());
+            }
+            catch (Exception)
+            {
+                return JsonSerializer.Serialize(new { Type = ex.GetType().FullName, ex.Message, ex.StackTrace });
+            }
         }
 
         private void FireAndForget(IOperationalEvent evt)

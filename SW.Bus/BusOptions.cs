@@ -178,6 +178,12 @@ namespace SW.Bus
         /// Used to include authentication information in message headers for cross-service authorization.
         /// </summary>
         public JwtTokenParameters Token { get; set; }
+
+        /// <summary>
+        /// What a consumer does with a message whose user token it cannot validate (for example a different
+        /// signing key than the publisher's). Defaults to <see cref="InvalidUserTokenBehavior.Fail"/>.
+        /// </summary>
+        public InvalidUserTokenBehavior OnInvalidUserToken { get; set; } = InvalidUserTokenBehavior.Fail;
         
         /// <summary>
         /// Gets or sets the application name used in queue and exchange naming.
@@ -319,5 +325,28 @@ namespace SW.Bus
             };
         }
 
+    }
+
+    /// <summary>
+    /// How a consumer reacts to a message carrying a user token it cannot validate.
+    /// </summary>
+    public enum InvalidUserTokenBehavior
+    {
+        /// <summary>
+        /// Fail the message without retrying; it is moved to the dead-letter queue.
+        /// </summary>
+        Fail = 0,
+
+        /// <summary>
+        /// Log a warning and process the message with no user, as if it had been published without one.
+        /// Only for consumers whose handlers do not depend on the caller's identity.
+        /// </summary>
+        ContinueAnonymous = 1,
+
+        /// <summary>
+        /// Same as <see cref="ContinueAnonymous"/> but without the warning log, for consumers where the
+        /// mismatch is expected and the log would only be noise.
+        /// </summary>
+        ContinueAnonymousSilently = 2
     }
 }
