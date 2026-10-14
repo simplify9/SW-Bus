@@ -40,7 +40,7 @@ The library ships as three complementary NuGet packages:
 18. [Testing](#testing)
 19. [Dependencies](#dependencies)
 20. [Concurrency, Publisher Confirms and Shutdown](#concurrency-publisher-confirms-and-shutdown)
-21. [Upgrading from 10.x to 11.0](#upgrading-from-10x-to-110)
+21. [Upgrading to 10.1](#upgrading-to-101)
 
 ## Features
 
@@ -1098,9 +1098,9 @@ Messages prefetched but not started, and any still running when the drain times 
 
 ---
 
-## Upgrading from 10.x to 11.0
+## Upgrading to 10.1
 
-11.0 moves the bus to RabbitMQ.Client 7. The public interfaces (`IPublish`, `IPublishWithValues`, `IBroadcast`, `IConsume`, `IConsume<T>`, `IConsumeExtended`, `IListen<T>`) and the option names are unchanged. Queue names, arguments and bindings, the retry and bad queue TTLs, and the exchanges are exactly as they were, so an 11.0 node redeclares an existing 10.x topology without the broker refusing it, and 10.x and 11.0 nodes can run side by side during a rollout.
+10.1 moves the bus to RabbitMQ.Client 7. The public interfaces (`IPublish`, `IPublishWithValues`, `IBroadcast`, `IConsume`, `IConsume<T>`, `IConsumeExtended`, `IListen<T>`) and the option names are unchanged. Queue names, arguments and bindings, the retry and bad queue TTLs, and the exchanges are exactly as they were, so a 10.1 node redeclares an existing 10.0 topology without the broker refusing it, and 10.0 and 10.1 nodes can run side by side during a rollout.
 
 What changes in behaviour:
 
