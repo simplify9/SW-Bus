@@ -14,4 +14,12 @@ public class ConsumerOptions
     /// Gets or sets the priority of the consumer. Higher values indicate higher priority.
     /// </summary>
     public int? Priority { get; set; }
+
+    /// <summary>
+    /// Gets or sets how many messages of this queue are processed at the same time on one node.
+    /// 1 processes them one at a time, in the order they arrive. Above 1 they run in parallel and
+    /// their order is not kept. Prefetch still caps it: a node never holds more than prefetch
+    /// unacknowledged messages. When null, <c>BusOptions.DefaultConsumerConcurrency</c> applies.
+    /// </summary>
+    public ushort? Concurrency { get; set; }
 }

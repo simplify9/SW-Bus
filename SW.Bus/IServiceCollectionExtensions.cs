@@ -61,11 +61,10 @@ namespace SW.Bus
                 throw new BusException("Connection string named 'RabbitMQ' is required.");
             }
 
-            var factory = new ConnectionFactory
-            {
-                Uri = new Uri(rabbitUrl),
-                ClientProvidedName = $"{Assembly.GetCallingAssembly().GetName().Name} Exchange Declarer"
-            };
+            busOptions.ConnectionString = rabbitUrl;
+
+            // Parsed only, for the management API defaults below; the bus connects in BusConnection.
+            var factory = new ConnectionFactory { Uri = new Uri(rabbitUrl) };
 
             if (string.IsNullOrEmpty(busOptions.ManagementUrl))
             {
@@ -104,16 +103,17 @@ namespace SW.Bus
             services.TryAddSingleton<IAlertEvaluator, AlertEvaluator>();
             services.TryAddSingleton<IBusDashboardDataService, BusDashboardDataService>();
 
-            using var conn = factory.CreateConnection();
-            using var model = conn.CreateModel();
-
-            model.ExchangeDeclare(busOptions.ProcessExchange, ExchangeType.Direct, true);
-            model.ExchangeDeclare(busOptions.DeadLetterExchange, ExchangeType.Direct, true);
-            model.ExchangeDeclare(busOptions.NodeExchange, ExchangeType.Direct, true);
-            model.ExchangeDeclare(busOptions.NodeDeadLetterExchange, ExchangeType.Direct, true);
-
-            model.Close();
-            conn.Close();
+            // The connections open, and the exchanges are declared, when the host starts, not here, so a
+            // host whose broker is down still builds and starts. Registered before the consumer service so
+            // it stops after it: hosted services stop in reverse order, and draining consumers may publish.
+            services.AddSingleton(new BusConnectionNames
+            {
+                Publisher = $"{Assembly.GetCallingAssembly().GetName().Name} Publisher",
+                Consumer = $"{typeof(IServiceCollectionExtensions).Assembly.GetName().Name} Consumer"
+            });
+            services.AddSingleton<BusConnection>();
+            services.AddSingleton<IBusConnectionStatus>(sp => sp.GetRequiredService<BusConnection>());
+            services.AddHostedService(sp => sp.GetRequiredService<BusConnection>());
 
             services.AddHttpClient<IConsumerReader, ConsumerReader>((sp, client) =>
             {
@@ -141,23 +141,20 @@ namespace SW.Bus
         /// </summary>
         /// <param name="services">The <see cref="IServiceCollection"/> to add services to.</param>
         /// <returns>The <see cref="IServiceCollection"/> for chaining.</returns>
+        /// <remarks>
+        /// Each DI scope publishes on its own channel, opened on the scope's first publish and closed with
+        /// the scope. With <see cref="BusOptions.PublisherConfirms"/> on, a publish completes when the
+        /// broker has the message and throws when it does not.
+        /// </remarks>
         public static IServiceCollection AddBusPublish(this IServiceCollection services)
         {
             var sp = services.BuildServiceProvider();
-            var rabbitUrl = sp.GetRequiredService<IConfiguration>().GetConnectionString("RabbitMQ");
             var busOptions = sp.GetRequiredService<BusOptions>();
-
-            var factory = new ConnectionFactory
-            {
-                Uri = new Uri(rabbitUrl),
-                ClientProvidedName = $"{Assembly.GetCallingAssembly().GetName().Name} Publisher"
-            };
-
-            var conn = factory.CreateConnection();
-            var model = conn.CreateModel();
+            var names = sp.GetRequiredService<BusConnectionNames>();
+            names.Publisher = $"{Assembly.GetCallingAssembly().GetName().Name} Publisher";
 
             return services.AddScoped(serviceProvider => new BasicPublisher(
-                model,
+                serviceProvider.GetRequiredService<BusConnection>(),
                 serviceProvider.GetRequiredService<BusOptions>(),
                 serviceProvider.GetRequiredService<RequestContext>(),
                 serviceProvider.GetRequiredService<IOperationalEventPublisher>(),
@@ -236,24 +233,6 @@ namespace SW.Bus
 
         private static IServiceCollection AddConsumerService(this IServiceCollection services)
         {
-            var clientProvidedName = $"{Assembly.GetCallingAssembly().GetName().Name} Consumer";
-            services.AddSingleton(sp =>
-            {
-                var rabbitUrl = sp.GetRequiredService<IConfiguration>().GetConnectionString("RabbitMQ");
-
-
-                var factory = new ConnectionFactory
-                {
-                    //AutomaticRecoveryEnabled = false,
-                    Uri = new Uri(rabbitUrl),
-                    DispatchConsumersAsync = true,
-                    RequestedHeartbeat = sp.GetRequiredService<BusOptions>().RequestedHeartbeat,
-                    ClientProvidedName = clientProvidedName
-                };
-
-                return factory;
-            });
-
             services.AddHostedService<ConsumersService>();
             services.AddSingleton<ConsumerRunner>();
             return services;

@@ -170,6 +170,9 @@ namespace SW.Bus
         /// </summary>
         public string VirtualHost { get; set; }
 
+        /// <summary>The 'RabbitMQ' connection string, read by <c>AddBus</c>.</summary>
+        internal string ConnectionString { get; set; }
+
         internal TimeSpan RequestedHeartbeat =>
             HeartBeatTimeOut > 0 ? TimeSpan.FromSeconds(HeartBeatTimeOut) : TimeSpan.Zero;
             
@@ -204,6 +207,35 @@ namespace SW.Bus
         /// Can be overridden per queue using <see cref="AddQueueOption"/>.
         /// </remarks>
         public ushort DefaultQueuePrefetch { get; set; }
+
+        /// <summary>
+        /// Gets or sets how many messages of one queue a node processes at the same time, for queues
+        /// that do not set their own (<see cref="ConsumerOptions.Concurrency"/> or <see cref="AddQueueOption"/>).
+        /// Default: 1, one at a time in the order they arrive.
+        /// </summary>
+        /// <remarks>
+        /// Each queue has its own channel, and this is that channel's consumer dispatch concurrency.
+        /// The effective concurrency is the smaller of this and the queue's prefetch, because the
+        /// broker never sends a node more than prefetch unacknowledged messages. Above 1, messages
+        /// of the queue are not processed in order and the consumer must be safe to run in parallel.
+        /// </remarks>
+        public ushort DefaultConsumerConcurrency { get; set; } = 1;
+
+        /// <summary>
+        /// Gets or sets whether publishes wait for the broker to confirm it has the message.
+        /// When true, <see cref="SW.PrimitiveTypes.IPublish"/> and <see cref="SW.PrimitiveTypes.IBroadcast"/> complete only once the broker
+        /// has taken responsibility for the message, and throw when it refuses it or cannot be reached.
+        /// Default: true.
+        /// </summary>
+        public bool PublisherConfirms { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets how long stopping the bus waits for messages already being processed to finish
+        /// and be acknowledged, after the consumers stop receiving new ones. Messages still running
+        /// when it expires are returned to their queue when the channel closes.
+        /// Default: 30 seconds. The host's own shutdown timeout also bounds it.
+        /// </summary>
+        public TimeSpan DrainTimeout { get; set; } = TimeSpan.FromSeconds(30);
         
         /// <summary>
         /// Gets or sets the default number of retry attempts for failed messages.
@@ -302,6 +334,7 @@ namespace SW.Bus
         /// <param name="retryCount">The number of retry attempts for this queue. If null, uses <see cref="DefaultRetryCount"/>.</param>
         /// <param name="retryAfterSeconds">The delay in seconds before retrying. If null, uses <see cref="DefaultRetryAfter"/>.</param>
         /// <param name="priority">The maximum priority level for this queue. If null, uses <see cref="DefaultMaxPriority"/>.</param>
+        /// <param name="concurrency">How many messages of this queue a node processes at the same time. If null, uses <see cref="DefaultConsumerConcurrency"/>.</param>
         /// <example>
         /// <code>
         /// services.AddBus(options => 
@@ -314,14 +347,16 @@ namespace SW.Bus
         /// });
         /// </code>
         /// </example>
-        public void AddQueueOption(string queueName, ushort? prefetch = null, int? retryCount = null, uint? retryAfterSeconds = null,int? priority = null)
+        public void AddQueueOption(string queueName, ushort? prefetch = null, int? retryCount = null, uint? retryAfterSeconds = null,int? priority = null,
+            ushort? concurrency = null)
         {
             Options[queueName.ToLower()] = new QueueOptions
             {
                 Prefetch = prefetch,
                 RetryCount = retryCount,
                 RetryAfterSeconds = retryAfterSeconds,
-                Priority = priority
+                Priority = priority,
+                Concurrency = concurrency
             };
         }
 

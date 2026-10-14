@@ -29,6 +29,8 @@ public class ConsumerDefinition
             queueOptions.Prefetch = consumerOptions.Prefetch;
         if (consumerOptions.Priority.HasValue)
             queueOptions.Priority = consumerOptions.Priority;
+        if (consumerOptions.Concurrency.HasValue)
+            queueOptions.Concurrency = consumerOptions.Concurrency;
     }
 
     public Type ServiceType { get; set; }
@@ -38,6 +40,7 @@ public class ConsumerDefinition
     public int RetryCount => queueOptions?.RetryCount ?? busOptions.DefaultRetryCount;
     public uint RetryAfter => queueOptions?.RetryAfterSeconds ?? busOptions.DefaultRetryAfter;
     public ushort QueuePrefetch => queueOptions?.Prefetch ?? busOptions.DefaultQueuePrefetch;
+    public ushort Concurrency => Math.Max((ushort)1, queueOptions?.Concurrency ?? busOptions.DefaultConsumerConcurrency);
     public string NakedQueueName { get; private set; }
     public string QueueName => $"{queueNamePrefix}.{NakedQueueName}".ToLower();
     public string RoutingKey => MessageTypeName.ToLower();

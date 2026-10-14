@@ -37,15 +37,15 @@ public class ConsumerRefreshTests
         await using var harness = await BusHarness.StartAsync(_container.GetConnectionString());
         var prefix = $"{harness.Options.ProcessExchange}.itest.dynamicconsumer";
 
-        using var conn = new ConnectionFactory { Uri = new Uri(_container.GetConnectionString()) }.CreateConnection();
+        await using var conn = await new ConnectionFactory { Uri = new Uri(_container.GetConnectionString()) }.CreateConnectionAsync();
 
         // A channel per check: a passive declare of a queue that doesn't exist yet closes its channel.
-        uint Consumers(string name)
+        async Task<uint> Consumers(string name)
         {
-            using var model = conn.CreateModel();
+            await using var model = await conn.CreateChannelAsync();
             try
             {
-                return model.QueueDeclarePassive($"{prefix}.{name}").ConsumerCount;
+                return (await model.QueueDeclarePassiveAsync($"{prefix}.{name}")).ConsumerCount;
             }
             catch (OperationInterruptedException)
             {
@@ -54,27 +54,27 @@ public class ConsumerRefreshTests
         }
 
         // Consumers attach on a background task, so both are waited for rather than assumed.
-        Assert.IsTrue(await Eventually(() => Consumers("kept") == 1 && Consumers("removed") == 1),
+        Assert.IsTrue(await Eventually(async () => await Consumers("kept") == 1 && await Consumers("removed") == 1),
             "The consumers never attached.");
 
         harness.Services.GetRequiredService<DynamicMessageTypes>().Names.TryRemove("removed", out _);
         using (var scope = harness.Services.CreateScope())
             await scope.ServiceProvider.GetRequiredService<IBroadcast>().RefreshConsumers();
 
-        Assert.IsTrue(await Eventually(() => Consumers("removed") == 0), "The removed consumer is still attached.");
-        Assert.AreEqual(1u, Consumers("kept"), "Refresh detached a consumer that is still defined.");
+        Assert.IsTrue(await Eventually(async () => await Consumers("removed") == 0), "The removed consumer is still attached.");
+        Assert.AreEqual(1u, await Consumers("kept"), "Refresh detached a consumer that is still defined.");
         // Passive declare throws if the queue is gone: stopping the consumer must leave it in place.
-        using var check = conn.CreateModel();
-        check.QueueDeclarePassive($"{prefix}.removed");
-        check.QueueDeclarePassive($"{prefix}.removed.retry");
-        check.QueueDeclarePassive($"{prefix}.removed.bad");
+        await using var check = await conn.CreateChannelAsync();
+        await check.QueueDeclarePassiveAsync($"{prefix}.removed");
+        await check.QueueDeclarePassiveAsync($"{prefix}.removed.retry");
+        await check.QueueDeclarePassiveAsync($"{prefix}.removed.bad");
     }
 
-    private static async Task<bool> Eventually(Func<bool> condition)
+    private static async Task<bool> Eventually(Func<Task<bool>> condition)
     {
         var sw = Stopwatch.StartNew();
-        while (!condition() && sw.Elapsed < TimeSpan.FromSeconds(15))
+        while (!await condition() && sw.Elapsed < TimeSpan.FromSeconds(15))
             await Task.Delay(250);
-        return condition();
+        return await condition();
     }
 }

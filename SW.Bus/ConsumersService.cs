@@ -16,42 +16,58 @@ internal class ConsumersService : IHostedService
     private readonly ILogger<ConsumersService> logger;
     private readonly BusOptions busOptions;
     private readonly ConsumerDiscovery consumerDiscovery;
-    private readonly ConnectionFactory connectionFactory;
+    private readonly BusConnection busConnection;
     
     // Thread-safe dictionary for runtime updates
-    private readonly ConcurrentDictionary<string, (IModel model, ConsumerDefinition consumerDefinition)> openModels;
+    private readonly ConcurrentDictionary<string, AttachedConsumer> openModels;
+    // Consumers taken out of service (removed, or replaced to change their concurrency) whose channel
+    // closes once the messages they were processing are acknowledged.
+    private readonly ConcurrentDictionary<AttachedConsumer, Task> retiring = new();
     private readonly ConsumerRunner consumerRunner;
     private readonly IOperationalEventPublisher operationalEventPublisher;
+    private readonly CancellationTokenSource stopping = new();
 
     private IConnection conn;
-    private IModel nodeModel;
+    private AttachedConsumer nodeConsumer;
+    private Task startTask = Task.CompletedTask;
+    private bool stopped;
     
     // Semaphore to prevent overlapping refresh operations
     private readonly SemaphoreSlim _topologyLock = new(1, 1);
 
     public ConsumersService(ILogger<ConsumersService> logger, BusOptions busOptions,
-        ConsumerDiscovery consumerDiscovery, ConnectionFactory connectionFactory, ConsumerRunner consumerRunner,
+        ConsumerDiscovery consumerDiscovery, BusConnection busConnection, ConsumerRunner consumerRunner,
         IOperationalEventPublisher operationalEventPublisher)
     {
         this.logger = logger;
         this.busOptions = busOptions;
         this.consumerDiscovery = consumerDiscovery;
-        this.connectionFactory = connectionFactory;
+        this.busConnection = busConnection;
         this.consumerRunner = consumerRunner;
         this.operationalEventPublisher = operationalEventPublisher;
 
-        openModels = new ConcurrentDictionary<string, (IModel, ConsumerDefinition)>();
+        openModels = new ConcurrentDictionary<string, AttachedConsumer>();
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
         // Offload to background thread to not block Host startup
-        Task.Run(() => StartBusAsync(cancellationToken), cancellationToken);
+        startTask = Task.Run(() => StartBusAsync(stopping.Token), CancellationToken.None);
         return Task.CompletedTask;
     }
 
     private async Task StartBusAsync(CancellationToken cancellationToken)
     {
+        try
+        {
+            // BusConnection retries until the broker answers; queues bind to these exchanges.
+            await busConnection.WaitForExchangesAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
         var retryCount = 0;
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -62,27 +78,29 @@ internal class ConsumersService : IHostedService
                 {
                     var consumerDefinitions = await consumerDiscovery.Load();
 
-                    // 1. Establish Connection
-                    if (conn is not { IsOpen: true })
+                    // 1. Establish Connection. Opened once; the client recovers it, with its channels,
+                    // queues, bindings and consumers, after an outage, so nothing here re-attaches.
+                    if (conn == null)
                     {
-                        conn = connectionFactory.CreateConnection();
-                        conn.ConnectionShutdown += ConnectionShutdown;
+                        conn = await busConnection.GetConsumerConnectionAsync(cancellationToken);
+                        conn.ConsumerTagChangeAfterRecoveryAsync += ConsumerTagChangedAfterRecovery;
                     }
 
                     // 2. Setup Node Listener (Control Channel)
-                    DeclareAndBindListener();
+                    await DeclareAndBindListener(cancellationToken);
 
                     // 3. Declare Queues (using a temporary channel to keep consumer channels clean)
-                    using (var model = conn.CreateModel())
+                    await using (var model = await conn.CreateChannelAsync(cancellationToken: cancellationToken))
                     {
                         foreach (var c in consumerDefinitions)
-                            DeclareAndBind(model, c);
+                            await DeclareAndBind(model, c, cancellationToken);
+                        await model.CloseAsync(cancellationToken);
                     }
 
                     // 4. Attach Consumers
                     foreach (var consumerDefinition in consumerDefinitions)
                     {
-                        AttachConsumer(consumerDefinition);
+                        await AttachConsumer(consumerDefinition, cancellationToken);
                     }
                     
                     logger.LogInformation("ConsumersService started successfully.");
@@ -92,6 +110,10 @@ internal class ConsumersService : IHostedService
                 {
                     _topologyLock.Release();
                 }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                break;
             }
             catch (Exception ex)
             {
@@ -111,25 +133,27 @@ internal class ConsumersService : IHostedService
         }
     }
 
-    private void DeclareAndBind(IModel model, ConsumerDefinition c)
+    // Names, arguments and bindings must stay exactly as they are: the broker refuses to redeclare an
+    // existing queue with different arguments.
+    private async Task DeclareAndBind(IChannel model, ConsumerDefinition c, CancellationToken cancellationToken)
     {
         logger.LogInformation($"Declaring and binding: {c.QueueName}.");
 
-        model.QueueDeclare(c.QueueName, true, false, false, c.ProcessArgs);
-        model.QueueBind(c.QueueName, busOptions.ProcessExchange, c.RoutingKey, null);
-        model.QueueBind(c.QueueName, busOptions.ProcessExchange, c.RetryRoutingKey, null);
+        await model.QueueDeclareAsync(c.QueueName, true, false, false, c.ProcessArgs, cancellationToken: cancellationToken);
+        await model.QueueBindAsync(c.QueueName, busOptions.ProcessExchange, c.RoutingKey, null, cancellationToken: cancellationToken);
+        await model.QueueBindAsync(c.QueueName, busOptions.ProcessExchange, c.RetryRoutingKey, null, cancellationToken: cancellationToken);
 
-        model.QueueDeclare(c.RetryQueueName, true, false, false, c.RetryArgs);
-        model.QueueBind(c.RetryQueueName, busOptions.DeadLetterExchange, c.RetryRoutingKey, null);
+        await model.QueueDeclareAsync(c.RetryQueueName, true, false, false, c.RetryArgs, cancellationToken: cancellationToken);
+        await model.QueueBindAsync(c.RetryQueueName, busOptions.DeadLetterExchange, c.RetryRoutingKey, null, cancellationToken: cancellationToken);
 
-        model.QueueDeclare(c.BadQueueName, true, false, false, ConsumerDefinition.BadArgs);
-        model.QueueBind(c.BadQueueName, busOptions.DeadLetterExchange, c.BadRoutingKey, null);
+        await model.QueueDeclareAsync(c.BadQueueName, true, false, false, ConsumerDefinition.BadArgs, cancellationToken: cancellationToken);
+        await model.QueueBindAsync(c.BadQueueName, busOptions.DeadLetterExchange, c.BadRoutingKey, null, cancellationToken: cancellationToken);
     }
 
-    private void DeclareAndBindListener()
+    private async Task DeclareAndBindListener(CancellationToken cancellationToken)
     {
-        // Ensure we don't double-bind if this is a reconnect
-        if (nodeModel != null && nodeModel.IsOpen) return;
+        // Ensure we don't double-bind if this is a retried start; set only once fully attached.
+        if (nodeConsumer != null) return;
 
         logger.LogInformation($"Declaring and binding node queue: {busOptions.NodeQueueName}.");
         var listeners = consumerDiscovery.LoadListeners();
@@ -144,72 +168,111 @@ internal class ConsumersService : IHostedService
             throw new BusException(
                 $"Duplicate node consumers defined for: {string.Join(',', repeated.Select(r => r.MessageType.FullName))}");
 
-        nodeModel = conn.CreateModel();
-        
-        nodeModel.QueueDeclare(busOptions.NodeQueueName, true, true, true, busOptions.NodeProcessArgs);
-        nodeModel.QueueBind(busOptions.NodeQueueName, busOptions.NodeExchange, busOptions.NodeRoutingKey, null);
-        nodeModel.QueueBind(busOptions.NodeQueueName, busOptions.NodeExchange, busOptions.NodeRetryRoutingKey, null);
-        
-        nodeModel.QueueDeclare(busOptions.NodeRetryQueueName, true, true, true, busOptions.NodeRetryArgs);
-        nodeModel.QueueBind(busOptions.NodeRetryQueueName, busOptions.NodeDeadLetterExchange, busOptions.NodeRetryRoutingKey, null);
-        
-        nodeModel.QueueDeclare(busOptions.NodeBadQueueName, true, false, false, ConsumerDefinition.BadArgs);
-        nodeModel.QueueBind(busOptions.NodeBadQueueName, busOptions.NodeDeadLetterExchange, busOptions.NodeBadRoutingKey, null);
-
-        var consumer = new AsyncEventingBasicConsumer(nodeModel);
-        consumer.Received += async (ch, ea) =>
+        var nodeModel = await conn.CreateChannelAsync(new CreateChannelOptions(false, false,
+            consumerDispatchConcurrency: 1), cancellationToken);
+        try
         {
-            // Pass the RefreshConsumers method as the callback
-            await consumerRunner.RunNodeMessage(ea, nodeModel, listeners, RefreshConsumers);
-        };
+            await nodeModel.QueueDeclareAsync(busOptions.NodeQueueName, true, true, true, busOptions.NodeProcessArgs, cancellationToken: cancellationToken);
+            await nodeModel.QueueBindAsync(busOptions.NodeQueueName, busOptions.NodeExchange, busOptions.NodeRoutingKey, null, cancellationToken: cancellationToken);
+            await nodeModel.QueueBindAsync(busOptions.NodeQueueName, busOptions.NodeExchange, busOptions.NodeRetryRoutingKey, null, cancellationToken: cancellationToken);
 
-        nodeModel.BasicQos(0, 1, false);
-        nodeModel.BasicConsume(busOptions.NodeQueueName, false, consumer);
+            await nodeModel.QueueDeclareAsync(busOptions.NodeRetryQueueName, true, true, true, busOptions.NodeRetryArgs, cancellationToken: cancellationToken);
+            await nodeModel.QueueBindAsync(busOptions.NodeRetryQueueName, busOptions.NodeDeadLetterExchange, busOptions.NodeRetryRoutingKey, null, cancellationToken: cancellationToken);
+
+            await nodeModel.QueueDeclareAsync(busOptions.NodeBadQueueName, true, false, false, ConsumerDefinition.BadArgs, cancellationToken: cancellationToken);
+            await nodeModel.QueueBindAsync(busOptions.NodeBadQueueName, busOptions.NodeDeadLetterExchange, busOptions.NodeBadRoutingKey, null, cancellationToken: cancellationToken);
+
+            var attached = new AttachedConsumer(nodeModel, null);
+            var consumer = new AsyncEventingBasicConsumer(nodeModel);
+            consumer.ReceivedAsync += async (ch, ea) =>
+            {
+                if (!attached.InFlight.TryEnter()) return;
+                try
+                {
+                    // Pass the RefreshConsumers method as the callback
+                    await consumerRunner.RunNodeMessage(ea, nodeModel, listeners, RefreshConsumers);
+                }
+                finally
+                {
+                    attached.InFlight.Exit();
+                }
+            };
+
+            await nodeModel.BasicQosAsync(0, 1, false, cancellationToken);
+            attached.ConsumerTag = await nodeModel.BasicConsumeAsync(busOptions.NodeQueueName, false, consumer, cancellationToken);
+            nodeConsumer = attached;
+        }
+        catch
+        {
+            await nodeModel.DisposeAsync();
+            throw;
+        }
     }
 
-    private void AttachConsumer(ConsumerDefinition consumerDefinition)
+    private async Task AttachConsumer(ConsumerDefinition consumerDefinition, CancellationToken cancellationToken = default)
     {
         if (openModels.ContainsKey(consumerDefinition.QueueName)) return;
 
-        var model = conn.CreateModel();
-        
-        var consumer = new AsyncEventingBasicConsumer(model);
-        consumerDefinition.ConsumerObject = consumer;
-        
-        consumer.Shutdown += (ch, args) =>
+        // The channel's dispatch concurrency is how many messages of this queue run at once on this node.
+        var model = await conn.CreateChannelAsync(new CreateChannelOptions(false, false,
+            consumerDispatchConcurrency: consumerDefinition.Concurrency), cancellationToken);
+        var attached = new AttachedConsumer(model, consumerDefinition);
+        try
         {
-            logger.LogWarning($"Consumer {consumerDefinition.QueueName} shutdown. {args}");
-            FireAndForget(new ConsumerDisconnected(
-                DateTime.UtcNow,
-                busOptions.OperationalEventsSchemaVersion,
-                Environment.MachineName,
-                busOptions.EnvironmentName,
-                busOptions.ApplicationName ?? string.Empty,
-                busOptions.ProcessExchange,
-                consumerDefinition.QueueName,
-                consumerDefinition.ServiceType?.Name ?? string.Empty,
-                consumerDefinition.MessageTypeName,
-                string.Empty,
-                string.Empty,
-                string.Empty,
-                string.Empty,
-                string.Empty,
-                null,
-                args?.ReplyText ?? "shutdown"));
-            return Task.CompletedTask;
-        };
-        
-        consumer.Received += async (ch, ea) => 
-        { 
-            await consumerRunner.Run(ea, consumerDefinition, model); 
-        };
+            var consumer = new AsyncEventingBasicConsumer(model);
+            consumerDefinition.ConsumerObject = consumer;
+            
+            consumer.ShutdownAsync += (ch, args) =>
+            {
+                logger.LogWarning($"Consumer {consumerDefinition.QueueName} shutdown. {args}");
+                FireAndForget(new ConsumerDisconnected(
+                    DateTime.UtcNow,
+                    busOptions.OperationalEventsSchemaVersion,
+                    Environment.MachineName,
+                    busOptions.EnvironmentName,
+                    busOptions.ApplicationName ?? string.Empty,
+                    busOptions.ProcessExchange,
+                    consumerDefinition.QueueName,
+                    consumerDefinition.ServiceType?.Name ?? string.Empty,
+                    consumerDefinition.MessageTypeName,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    null,
+                    args?.ReplyText ?? "shutdown"));
+                return Task.CompletedTask;
+            };
+            
+            consumer.ReceivedAsync += async (ch, ea) => 
+            { 
+                // Once the consumer is stopping, a message it has not started is left unacknowledged
+                // and returns to the queue when the channel closes.
+                if (!attached.InFlight.TryEnter()) return;
+                try
+                {
+                    await consumerRunner.Run(ea, consumerDefinition, model);
+                }
+                finally
+                {
+                    attached.InFlight.Exit();
+                }
+            };
 
-        model.BasicQos(0, consumerDefinition.QueuePrefetch, false);
+            await model.BasicQosAsync(0, consumerDefinition.QueuePrefetch, false, cancellationToken);
 
-        consumerDefinition.ConsumerTag = model.BasicConsume(consumerDefinition.QueueName, false, "",
-            consumerDefinition.ConsumerArgs, consumer);
+            consumerDefinition.ConsumerTag = await model.BasicConsumeAsync(consumerDefinition.QueueName, false, "",
+                false, false, consumerDefinition.ConsumerArgs, consumer, cancellationToken);
+            attached.ConsumerTag = consumerDefinition.ConsumerTag;
+        }
+        catch
+        {
+            await model.DisposeAsync();
+            throw;
+        }
 
-        openModels.TryAdd(consumerDefinition.QueueName, (model, consumerDefinition));
+        openModels.TryAdd(consumerDefinition.QueueName, attached);
         FireAndForget(new ConsumerConnected(
             DateTime.UtcNow,
             busOptions.OperationalEventsSchemaVersion,
@@ -228,39 +291,84 @@ internal class ConsumersService : IHostedService
             null,
             consumerDefinition.ConsumerTag));
 
-        TryEmitQueueBackpressure(model, consumerDefinition);
+        await TryEmitQueueBackpressure(model, consumerDefinition);
     }
 
-    private void DetachConsumer(string queueName)
+    private async Task DetachConsumer(string queueName)
     {
         if (!openModels.TryRemove(queueName, out var open)) return;
 
         logger.LogInformation($"Detaching removed consumer: {queueName}");
+        await Retire(open);
+    }
+
+    /// <summary>
+    /// Takes a consumer out of service: it starts no new message, its consumer is cancelled at the
+    /// broker, and its channel closes once the messages it is processing are acknowledged. Messages
+    /// prefetched but not started return to the queue when the channel closes.
+    /// </summary>
+    private async Task Retire(AttachedConsumer open)
+    {
+        open.InFlight.Close();
         try
         {
             // Cancel before closing: it also drops the consumer from the client's recovery records,
             // so a reconnect doesn't re-attach it.
-            if (open.model.IsOpen) open.model.BasicCancel(open.consumerDefinition.ConsumerTag);
+            if (open.Channel.IsOpen) await open.Channel.BasicCancelAsync(open.ConsumerTag);
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, $"Failed to cancel consumer {queueName}");
+            logger.LogWarning(ex, $"Failed to cancel consumer {open.Definition?.QueueName}");
         }
 
         // Closed whatever the cancel did: the entry is already gone, so no later refresh would
-        // retry, and closing the channel stops the consumer on its own.
+        // retry, and closing the channel stops the consumer on its own. Registered before it can
+        // finish, so a stop always sees it until its channel is closed.
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        retiring[open] = closed.Task;
+        _ = CloseWhenIdle(open, closed);
+    }
+
+    private async Task CloseWhenIdle(AttachedConsumer open, TaskCompletionSource closed)
+    {
         try
         {
-            if (open.model.IsOpen) open.model.Close();
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, $"Failed to close the channel of consumer {queueName}");
+            await open.InFlight.WhenIdle();
+            await CloseChannel(open);
         }
         finally
         {
-            open.model.Dispose();
+            retiring.TryRemove(open, out _);
+            closed.TrySetResult();
         }
+    }
+
+    /// <summary>
+    /// Closes a consumer's channel. The client's close, abort and dispose all wait for a running
+    /// handler to return, so the close is bounded: the broker closes the channel and requeues its
+    /// unacknowledged messages at once, and a channel still processing is not disposed here.
+    /// </summary>
+    private async Task CloseChannel(AttachedConsumer open)
+    {
+        var name = open.Definition?.QueueName ?? busOptions.NodeQueueName;
+        using var bounded = new CancellationTokenSource(BusConnection.CloseTimeout);
+        try
+        {
+            if (open.Channel.IsOpen) await open.Channel.CloseAsync(bounded.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            logger.LogWarning($"The channel of consumer {name} closed with a message still being processed; it returns to the queue.");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, $"Failed to close the channel of consumer {name}");
+        }
+
+        // Disposing a channel whose handler is still running blocks the closes of other channels
+        // on the connection until it returns, so such a channel is left to the connection's close.
+        if (open.InFlight.Count == 0)
+            await open.Channel.DisposeAsync();
     }
 
     private async Task RefreshConsumers()
@@ -269,17 +377,20 @@ internal class ConsumersService : IHostedService
         await _topologyLock.WaitAsync();
         try
         {
+            if (stopped || conn == null) return;
+
             logger.LogInformation("Refreshing consumers...");
             var newDefinitions = await consumerDiscovery.Load();
             
             // 1. Declare any NEW queues
-            using (var model = conn.CreateModel())
+            await using (var model = await conn.CreateChannelAsync())
             {
                 foreach (var c in newDefinitions)
                 {
                     if (openModels.ContainsKey(c.QueueName)) continue;
-                    DeclareAndBind(model, c);
+                    await DeclareAndBind(model, c, CancellationToken.None);
                 }
+                await model.CloseAsync();
             }
 
             // 2. Update existing or Attach new
@@ -288,18 +399,29 @@ internal class ConsumersService : IHostedService
                 // CASE A: Existing Consumer
                 if (openModels.TryGetValue(def.QueueName, out var existing))
                 {
-                    var existingModel = existing.model;
-                    var existingDef = existing.consumerDefinition;
+                    var existingModel = existing.Channel;
+                    var existingDef = existing.Definition;
 
                     var prefetchChanged = existingDef.QueuePrefetch != def.QueuePrefetch;
                     var priorityChanged = existingDef.ConsumerPriority != def.ConsumerPriority;
+                    var concurrencyChanged = existingDef.Concurrency != def.Concurrency;
 
-                    if (priorityChanged || prefetchChanged)
+                    if (concurrencyChanged)
+                    {
+                        // A channel's dispatch concurrency is fixed when it is created, so the consumer
+                        // moves to a new channel; the old one finishes what it is processing first.
+                        logger.LogInformation($"Concurrency changed for {def.QueueName}. Moving the consumer to a new channel.");
+                        openModels.TryRemove(def.QueueName, out _);
+                        await Retire(existing);
+                        existingDef.UpdateConsumerProps(def);
+                        await AttachConsumer(existingDef);
+                    }
+                    else if (priorityChanged || prefetchChanged)
                     {
                         logger.LogInformation($"Configuration changed for {def.QueueName}. Restarting consumer.");
                         try
                         {
-                            existingModel.BasicCancel(existingDef.ConsumerTag);
+                            await existingModel.BasicCancelAsync(existingDef.ConsumerTag);
                         }
                         catch (Exception ex)
                         {
@@ -309,10 +431,11 @@ internal class ConsumersService : IHostedService
                         // Update properties (including Args) BEFORE re-consuming
                         existingDef.UpdateConsumerProps(def);
 
-                        existingModel.BasicQos(0, def.QueuePrefetch, false);
+                        await existingModel.BasicQosAsync(0, def.QueuePrefetch, false);
                         
-                        existingDef.ConsumerTag = existingModel.BasicConsume(def.QueueName,
-                            false, "", existingDef.ConsumerArgs, existingDef.ConsumerObject);
+                        existingDef.ConsumerTag = await existingModel.BasicConsumeAsync(def.QueueName,
+                            false, "", false, false, existingDef.ConsumerArgs, existingDef.ConsumerObject);
+                        existing.ConsumerTag = existingDef.ConsumerTag;
                         
                     }
                     else 
@@ -324,7 +447,7 @@ internal class ConsumersService : IHostedService
                 else
                 {
                     logger.LogInformation($"Attaching new consumer: {def.QueueName}");
-                    AttachConsumer(def);
+                    await AttachConsumer(def);
                 }
             }
 
@@ -333,7 +456,7 @@ internal class ConsumersService : IHostedService
             // application to decide about.
             var defined = newDefinitions.Select(d => d.QueueName).ToHashSet();
             foreach (var queueName in openModels.Keys.Where(q => !defined.Contains(q)).ToList())
-                DetachConsumer(queueName);
+                await DetachConsumer(queueName);
         }
         catch (Exception ex)
         {
@@ -359,53 +482,95 @@ internal class ConsumersService : IHostedService
         return true;
     }
 
-    private void ConnectionShutdown(object connection, ShutdownEventArgs args)
+    // A consumer whose tag the broker generated gets a new one when the client recovers it.
+    private Task ConsumerTagChangedAfterRecovery(object sender, ConsumerTagChangedAfterRecoveryEventArgs args)
     {
-        logger.LogWarning($"Consumer RabbitMq connection shutdown. {args.Cause}");
-        // Note: RabbitMQ Client usually handles auto-recovery for connection, 
-        // but we might need to re-declare topology if AutomaticRecoveryEnabled is false.
+        foreach (var open in openModels.Values.Where(o => o.ConsumerTag == args.TagBefore))
+        {
+            open.ConsumerTag = args.TagAfter;
+            open.Definition.ConsumerTag = args.TagAfter;
+        }
+        if (nodeConsumer?.ConsumerTag == args.TagBefore) nodeConsumer.ConsumerTag = args.TagAfter;
+        return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Stops receiving, waits up to <see cref="BusOptions.DrainTimeout"/> (and the host's shutdown
+    /// token) for the messages being processed to finish and be acknowledged, then closes the
+    /// channels. Messages prefetched but not started, and any still running at the deadline, return
+    /// to their queue when the channel closes.
+    /// </summary>
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        await stopping.CancelAsync();
+        try
+        {
+            await startTask;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Consumer start ended with an error during stop.");
+        }
+
+        List<AttachedConsumer> consumers;
         await _topologyLock.WaitAsync(cancellationToken);
         try
         {
-            foreach (var (model, _) in openModels.Values)
-            {
-                try
-                {
-                    if (model.IsOpen) model.Close();
-                    model.Dispose();
-                }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(ex, "Failed to stop model.");
-                }
-            }
+            // The lock is not held while draining: a node message being drained may itself be a refresh.
+            stopped = true;
+            consumers = openModels.Values.ToList();
             openModels.Clear();
-
-            nodeModel?.Dispose();
-            if (conn != null)
-            {
-                if (conn.IsOpen) conn.Close();
-                conn.Dispose();
-            }
+            if (nodeConsumer != null) consumers.Add(nodeConsumer);
         }
         finally
         {
             _topologyLock.Release();
         }
+
+        using var drain = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        drain.CancelAfter(busOptions.DrainTimeout);
+
+        foreach (var open in consumers)
+        {
+            open.InFlight.Close();
+            try
+            {
+                if (open.Channel.IsOpen) await open.Channel.BasicCancelAsync(open.ConsumerTag, false, drain.Token);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, $"Failed to cancel consumer {open.Definition?.QueueName ?? busOptions.NodeQueueName}.");
+            }
+        }
+
+        var running = consumers.Sum(c => c.InFlight.Count);
+        if (running > 0)
+            logger.LogInformation("Waiting for {Count} message(s) being processed to finish.", running);
+        try
+        {
+            await Task.WhenAll(consumers.Select(c => c.InFlight.WhenIdle()).Concat(retiring.Values))
+                .WaitAsync(drain.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            logger.LogWarning("Stopped waiting for {Count} message(s) still being processed; they return to their queue.",
+                consumers.Sum(c => c.InFlight.Count) + retiring.Keys.Sum(c => c.InFlight.Count));
+        }
+
+        var all = consumers.Concat(retiring.Keys).ToList();
+        await Task.WhenAll(all.Select(CloseChannel));
+        retiring.Clear();
+        if (all.Any(c => c.InFlight.Count > 0)) busConnection.ConsumerHandlersStillRunning = true;
     }
 
-    private void TryEmitQueueBackpressure(IModel model, ConsumerDefinition consumerDefinition)
+    private async Task TryEmitQueueBackpressure(IChannel model, ConsumerDefinition consumerDefinition)
     {
         if (busOptions.QueueBackpressureThreshold <= 0)
             return;
 
         try
         {
-            var depth = model.MessageCount(consumerDefinition.QueueName);
+            var depth = await model.MessageCountAsync(consumerDefinition.QueueName);
             if (depth < busOptions.QueueBackpressureThreshold)
                 return;
 
@@ -442,5 +607,65 @@ internal class ConsumersService : IHostedService
                     "Unobserved exception publishing operational event {EventType}.",
                     evt.GetType().Name),
                 TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    private sealed class AttachedConsumer(IChannel channel, ConsumerDefinition definition)
+    {
+        public IChannel Channel { get; } = channel;
+        public ConsumerDefinition Definition { get; } = definition;
+        public string ConsumerTag { get; set; }
+        public InFlightMessages InFlight { get; } = new();
+    }
+}
+
+/// <summary>
+/// Counts the messages a consumer is processing, and once closed lets no new one start, so a stop or
+/// a channel replacement can wait for the running ones to be acknowledged.
+/// </summary>
+internal sealed class InFlightMessages
+{
+    private readonly object gate = new();
+    private int count;
+    private bool closed;
+    private TaskCompletionSource idle = NewIdle(completed: true);
+
+    public int Count
+    {
+        get { lock (gate) return count; }
+    }
+
+    public bool TryEnter()
+    {
+        lock (gate)
+        {
+            if (closed) return false;
+            if (count++ == 0) idle = NewIdle(completed: false);
+            return true;
+        }
+    }
+
+    public void Exit()
+    {
+        lock (gate)
+        {
+            if (--count == 0) idle.TrySetResult();
+        }
+    }
+
+    public void Close()
+    {
+        lock (gate) closed = true;
+    }
+
+    public Task WhenIdle()
+    {
+        lock (gate) return idle.Task;
+    }
+
+    private static TaskCompletionSource NewIdle(bool completed)
+    {
+        var source = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (completed) source.SetResult();
+        return source;
     }
 }

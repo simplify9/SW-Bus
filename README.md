@@ -39,6 +39,8 @@ The library ships as three complementary NuGet packages:
 17. [Architecture](#architecture)
 18. [Testing](#testing)
 19. [Dependencies](#dependencies)
+20. [Concurrency, Publisher Confirms and Shutdown](#concurrency-publisher-confirms-and-shutdown)
+21. [Upgrading from 10.x to 11.0](#upgrading-from-10x-to-110)
 
 ## Features
 
@@ -47,6 +49,9 @@ The library ships as three complementary NuGet packages:
 - 🔄 **Automatic Retries** — configurable per-queue retry counts and delay with dead-letter routing
 - 🎯 **Typed Consumers** — `IConsume<T>` with strongly-typed message deserialization
 - ⚙️ **Extended Consumer Options** — per-consumer prefetch and priority via `IConsumeExtended`
+- 🧵 **Parallel Consumers**: per-queue concurrency, how many messages of a queue run at once on one node (default 1, in order)
+- ✅ **Publisher Confirms**: a publish completes when the broker has the message, and throws when it does not
+- 🛑 **Graceful Shutdown**: messages being processed finish and are acknowledged before the host stops
 - 🔐 **JWT Propagation** — user context forwarded through message headers across services
 - 📊 **Queue Monitoring** — live queue depth, rates, and consumer counts via `IConsumerReader`
 - 🔍 **Error Queue Inspection** — peek retry and dead-letter queues via `IErrorQueueReader`
@@ -262,6 +267,12 @@ services.AddBus(config =>
     config.AddQueueOption(
         "PaymentConsumer.PaymentProcessed",
         priority: 10);
+
+    // Process up to 8 messages of this queue at once on each node
+    config.AddQueueOption(
+        "ReportConsumer.ReportRequested",
+        prefetch: 16,
+        concurrency: 8);
 });
 ```
 
@@ -292,7 +303,7 @@ public class MultiConsumer : IConsumeExtended
             new Dictionary<string, ConsumerOptions>
             {
                 ["TypeA"] = new ConsumerOptions { Prefetch = 4 },
-                ["TypeB"] = new ConsumerOptions { Prefetch = 16, Priority = 3 }
+                ["TypeB"] = new ConsumerOptions { Prefetch = 16, Priority = 3, Concurrency = 8 }
             });
 
     public async Task Process(string typeName, string message) { ... }
@@ -300,6 +311,8 @@ public class MultiConsumer : IConsumeExtended
 ```
 
 `IConsumeExtended` consumers are **hot-reloadable** — call `IBroadcast.RefreshConsumers()` to apply updated options across all running instances without restart.
+
+A change of `Concurrency` moves the consumer to a new channel, because a channel's dispatch concurrency is fixed when it is created. The old channel finishes the messages it is processing and closes; messages it had prefetched but not started return to the queue and are taken by the new channel. No message is processed twice.
 
 ---
 
@@ -878,14 +891,19 @@ services.AddBus(config =>
     config.VirtualHost        = "/";
 
     // ── Queue defaults ────────────────────────────────────────────────────
-    config.DefaultQueuePrefetch = 4;      // QoS prefetch per consumer
-    config.DefaultRetryCount    = 5;      // retries before dead-letter
-    config.DefaultRetryAfter    = 60;     // seconds between retries
-    config.DefaultMaxPriority   = 0;      // 0 = priority queues disabled
+    config.DefaultQueuePrefetch       = 4;   // QoS prefetch per consumer
+    config.DefaultConsumerConcurrency = 1;   // messages of one queue processed at once per node
+    config.DefaultRetryCount          = 5;   // retries before dead-letter
+    config.DefaultRetryAfter          = 60;  // seconds between retries
+    config.DefaultMaxPriority         = 0;   // 0 = priority queues disabled
 
     // ── Per-queue overrides ───────────────────────────────────────────────
     config.AddQueueOption("OrderConsumer.OrderCreated",
-        prefetch: 10, retryCount: 3, retryAfterSeconds: 30, priority: 5);
+        prefetch: 10, retryCount: 3, retryAfterSeconds: 30, priority: 5, concurrency: 4);
+
+    // ── Publishing and shutdown ───────────────────────────────────────────
+    config.PublisherConfirms = true;                     // a publish waits for the broker's confirm
+    config.DrainTimeout      = TimeSpan.FromSeconds(30); // wait for running messages on stop
 
     // ── Broadcast listeners ───────────────────────────────────────────────
     config.ListenRetryCount = 5;
@@ -1002,13 +1020,23 @@ dotnet test SW.Bus.IntegrationTests/SW.Bus.IntegrationTests.csproj
 
 **`ConsumerRefreshTests`** — calls `IBroadcast.RefreshConsumers` after a consumer's message type disappears, and asserts the consumer stops reading from that queue while the queue itself is left in place.
 
+**`ConcurrencyTests`**: a queue runs as many messages at once as its concurrency; at 1 it runs them one at a time in order; concurrency comes from the consumer options, then `AddQueueOption`, then `DefaultConsumerConcurrency`, and prefetch caps it; a refresh moves a consumer to a new concurrency without processing a message twice; a refresh applies a new prefetch; concurrent publishes from one scope and from many scopes all arrive.
+
+**`ConnectionTests`**: a publish against a stopped broker throws, and publishing resumes when it returns; a broker restart leaves exactly one consumer per queue (read through `IConsumerReader`) and on the node queue; a host whose broker is down at boot starts, reports not connected, and connects when the broker returns.
+
+**`DrainAndRetryTests`**: stopping lets running messages finish and acknowledge, and returns the ones not started; a message still running at the drain timeout returns to its queue; a failing message is retried its retry count and then moved to the bad queue with the same headers as before.
+
+**`PublishedValuesTests`**: values published beside the body reach the consumer as bus values.
+
 #### Structure
 
 | File | Role |
 |---|---|
 | `BusHarness` | Boots a real `IHost` against a container's connection string; waits for `ConsumersService` to declare topology |
+| `Broker` | Container helpers: stop and start the broker application, read a queue's counts and consumers |
 | `DynamicConsumer` | `IConsume` whose message types can change at runtime, like an application's database-driven consumers |
-| `ConsumerRefreshTests` | The refresh scenario above |
+| `WorkConsumer` | `IConsumeExtended` whose types, options and handlers a test sets, recording how many ran at once and in what order |
+| `ConsumerRefreshTests` and the classes above | The scenarios above |
 
 ---
 
@@ -1016,11 +1044,78 @@ dotnet test SW.Bus.IntegrationTests/SW.Bus.IntegrationTests.csproj
 
 | Package | Version | Used for |
 |---|---|---|
-| `RabbitMQ.Client` | 6.8.1 | AMQP connection and channel management |
+| `RabbitMQ.Client` | 7.2.2 | AMQP connection and channel management |
 | `EasyNetQ.Management.Client` | 3.0.1 | RabbitMQ Management API calls |
 | `Scrutor` | 4.2.2 | Assembly scanning for consumers |
 | `SimplyWorks.HttpExtensions` | 8.1.1 | JWT and request context propagation |
 | `SimplyWorks.PrimitiveTypes` | 10.0.0 | `RequestContext`, `IConsume<T>`, etc. |
+
+---
+
+## Concurrency, Publisher Confirms and Shutdown
+
+### Consumer concurrency
+
+Every queue a node consumes has its own channel. The channel's consumer dispatch concurrency is how many messages of that queue the node processes at the same time:
+
+| Setting | Where | Default |
+|---|---|---|
+| `ConsumerOptions.Concurrency` | `IConsumeExtended` / `IConsumeExtended<T>` options | null: falls through |
+| `concurrency:` | `BusOptions.AddQueueOption` | null: falls through |
+| `BusOptions.DefaultConsumerConcurrency` | the bus | 1 |
+
+- **1** processes the queue's messages one at a time, in the order they arrive on the node. This is the behaviour of 10.x.
+- **Above 1** processes them in parallel and their order is not kept. The consumer must be safe to run concurrently (it gets a DI scope per message, as before).
+- **Prefetch still caps it.** The broker never sends a node more than prefetch unacknowledged messages, so the effective concurrency is the smaller of the two. Prefetch is the buffer, concurrency is the parallelism.
+- Broadcast listeners (`IListen<T>`) always run one at a time.
+
+Parallel handlers also run in parallel against whatever they call: a database pool, a partner's API, memory for payloads. Size the concurrency with that in mind.
+
+### Publisher confirms
+
+With `BusOptions.PublisherConfirms` (default true), `IPublish`, `IPublishWithValues` and `IBroadcast` complete only when the broker confirms it has the message, and throw when the broker refuses it or cannot be reached. A publish that returned means the broker has the message.
+
+- Each DI scope publishes on a channel of its own, opened on the scope's first publish and closed with the scope. The channel is safe to publish on from several threads of the scope.
+- A publish waits about one broker round trip (plus the broker's disk write for persistent messages) for its confirm. Publishes in parallel (for example `Task.WhenAll`) share that wait.
+- The client adds an `x-dotnet-pub-seq-no` header to each confirmed message, its own tracking number. It is not copied to the dead-letter copy of a failed message.
+- The publisher connection and the consumer connection are separate, as before, so the broker's flow control on a busy publisher never holds back consumer acknowledgements.
+
+### Connecting and recovery
+
+The bus no longer connects inside `AddBus` or `AddBusPublish`. The connections open, and the exchanges are declared, in the background after the host starts, retrying until the broker answers. A host whose broker is down at boot therefore starts, and connects when the broker returns. Use `IBusConnectionStatus.IsConnected` (and `LastError`) for a readiness check.
+
+After an outage the client's automatic recovery reconnects and restores the exchanges, queues, bindings and consumers on their existing channels. The bus does not re-attach consumers itself, so a recovered node has exactly one consumer per queue.
+
+### Shutdown
+
+When the host stops, the bus:
+
+1. stops starting new messages and cancels every consumer at the broker;
+2. waits up to `BusOptions.DrainTimeout` (default 30 s, also bounded by the host's shutdown token) for the messages being processed to finish and be acknowledged; they can still publish;
+3. closes the channels and connections.
+
+Messages prefetched but not started, and any still running when the drain times out, are unacknowledged and return to their queue when the channel closes, to be processed again by another node. The .NET host's own `HostOptions.ShutdownTimeout` (30 s by default) and, on Kubernetes, `terminationGracePeriodSeconds` (30 s by default) must leave room for the drain.
+
+---
+
+## Upgrading from 10.x to 11.0
+
+11.0 moves the bus to RabbitMQ.Client 7. The public interfaces (`IPublish`, `IPublishWithValues`, `IBroadcast`, `IConsume`, `IConsume<T>`, `IConsumeExtended`, `IListen<T>`) and the option names are unchanged. Queue names, arguments and bindings, the retry and bad queue TTLs, and the exchanges are exactly as they were, so an 11.0 node redeclares an existing 10.x topology without the broker refusing it, and 10.x and 11.0 nodes can run side by side during a rollout.
+
+What changes in behaviour:
+
+- **Concurrency.** New, per queue; the default of 1 keeps the 10.x behaviour.
+- **Publisher confirms.** On by default: a publish now waits for the broker and throws when the broker does not have the message. Set `PublisherConfirms = false` for the 10.x fire-and-forget behaviour.
+- **Connecting.** `AddBus` and `AddBusPublish` no longer connect or declare the exchanges, and no longer throw when the broker is down; the host starts and the bus connects in the background. Check `IBusConnectionStatus` where readiness matters.
+- **Shutdown.** Stopping now drains running messages (`DrainTimeout`) instead of cutting them off.
+- **Message headers.** Published messages carry the client's `x-dotnet-pub-seq-no` header when confirms are on.
+
+What can break:
+
+- **`RabbitMQ.Client` 7 arrives transitively.** One process loads one version of the client, so code in the same application that uses `RabbitMQ.Client` directly must move to the 7 API at the same time: `IModel` is `IChannel`, `CreateModel()` is `CreateChannelAsync()`, every operation is async (`QueueDeclareAsync`, `BasicPublishAsync`, `BasicAckAsync`), consumers use `ReceivedAsync`, and `BasicDeliverEventArgs.BasicProperties` is `IReadOnlyBasicProperties`. See the [client's migration guide](https://github.com/rabbitmq/rabbitmq-dotnet-client/blob/main/v7-MIGRATION.md).
+- **`ConnectionFactory` is no longer registered in DI** by `AddBusConsume` / `AddBusListen`. Create your own if you resolved it.
+- **`BusOptions.AddQueueOption`** gained an optional `concurrency` parameter at the end: source compatible, but code compiled against 10.x must be rebuilt.
+- **`ConsumerDefinition.ConsumerObject`** is the client 7 `AsyncEventingBasicConsumer`.
 
 ---
 
