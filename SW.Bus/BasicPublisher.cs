@@ -14,13 +14,20 @@ using SW.PrimitiveTypes;
 
 namespace SW.Bus;
 
+/// <summary>
+/// Publishes for one DI scope on a channel of its own, opened on the scope's first publish and
+/// closed with the scope. The channel is safe to publish on from several threads of the scope.
+/// </summary>
 internal class BasicPublisher(
-    IModel model,
+    BusConnection busConnection,
     BusOptions busOptions,
     RequestContext requestContext,
     IOperationalEventPublisher operationalEventPublisher,
-    BusMetrics metrics)
+    BusMetrics metrics) : IDisposable, IAsyncDisposable
 {
+    private readonly SemaphoreSlim channelLock = new(1, 1);
+    private IChannel channel;
+
     async public Task Publish<TMessage>(TMessage message, string exchange, byte? priority = null)
     {
         var serializerOptions = new JsonSerializerOptions()
@@ -48,14 +55,14 @@ internal class BasicPublisher(
     }
 
     /// <param name="valuesHeader">Written by <see cref="PublishedValues.ToHeader"/>, which also checks its size.</param>
-    public Task Publish(string messageTypeName, byte[] message, string exchange, byte? priority = null,
+    public async Task Publish(string messageTypeName, byte[] message, string exchange, byte? priority = null,
         string valuesHeader = null)
     {
         var activity = BusDiagnostics.ActivitySource.StartActivity($"bus.publish {messageTypeName}", ActivityKind.Producer);
         var stopwatch = Stopwatch.StartNew();
 
-        var props = model.CreateBasicProperties();
-        props.DeliveryMode = 2;
+        var props = new BasicProperties();
+        props.DeliveryMode = DeliveryModes.Persistent;
         props.Headers = new Dictionary<string, object>();
         props.MessageId = Guid.NewGuid().ToString("N");
 
@@ -118,7 +125,10 @@ internal class BasicPublisher(
 
         try
         {
-            model.BasicPublish(exchange, messageTypeName.ToLower(), props, message);
+            var publishChannel = await GetChannelAsync();
+            // With confirms on, this completes when the broker has the message, and throws when the
+            // broker refuses it or the connection is lost before it answers.
+            await publishChannel.BasicPublishAsync(exchange, messageTypeName.ToLower(), false, props, message);
             stopwatch.Stop();
             activity?.SetTag("messaging.system", "rabbitmq");
             activity?.SetTag("messaging.destination.name", exchange);
@@ -178,9 +188,56 @@ internal class BasicPublisher(
         {
             activity?.Dispose();
         }
-
-        return Task.CompletedTask;
     }
+
+    private async Task<IChannel> GetChannelAsync()
+    {
+        var current = channel;
+        if (current is { IsClosed: false }) return current;
+
+        await channelLock.WaitAsync();
+        try
+        {
+            // Closed by the broker (a channel error) or never opened: open one. A channel that is
+            // recovering with its connection is not closed and is kept.
+            if (channel is { IsClosed: false }) return channel;
+            if (channel != null) await DisposeChannelAsync();
+
+            var connection = await busConnection.GetPublisherConnectionAsync();
+            channel = await connection.CreateChannelAsync(new CreateChannelOptions(
+                publisherConfirmationsEnabled: busOptions.PublisherConfirms,
+                publisherConfirmationTrackingEnabled: busOptions.PublisherConfirms));
+            return channel;
+        }
+        finally
+        {
+            channelLock.Release();
+        }
+    }
+
+    private async Task DisposeChannelAsync()
+    {
+        var closing = channel;
+        channel = null;
+        if (closing == null) return;
+        try
+        {
+            if (closing.IsOpen) await closing.CloseAsync();
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceWarning("Failed to close a publisher channel: {0}", ex.Message);
+        }
+        finally
+        {
+            await closing.DisposeAsync();
+        }
+    }
+
+    public async ValueTask DisposeAsync() => await DisposeChannelAsync();
+
+    // Scopes disposed synchronously (a plain "using var scope = CreateScope()") land here.
+    public void Dispose() => DisposeChannelAsync().GetAwaiter().GetResult();
 
     private void FireAndForget(IOperationalEvent evt)
     {

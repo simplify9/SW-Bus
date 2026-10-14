@@ -39,7 +39,7 @@ namespace SW.Bus
             this.logger = logger;
         }
 
-        internal async Task Run(BasicDeliverEventArgs ea, ConsumerDefinition consumerDefinition, IModel model)
+        internal async Task Run(BasicDeliverEventArgs ea, ConsumerDefinition consumerDefinition, IChannel model)
         {
             var remainingRetryCount = consumerDefinition.RetryCount;
 
@@ -107,7 +107,7 @@ namespace SW.Bus
                     await (Task)consumerDefinition.Method.Invoke(svc, new[] { messageObject });
                 }
 
-                model.BasicAck(ea.DeliveryTag, false);
+                await model.BasicAckAsync(ea.DeliveryTag, false);
                 stopwatch.Stop();
                 metrics.ProcessingCompleted.Add(1);
                 metrics.ProcessingLatencyMs.Record(stopwatch.Elapsed.TotalMilliseconds);
@@ -161,7 +161,7 @@ namespace SW.Bus
                 if (remainingRetryCount != 0 && ex is not InvalidUserTokenException)
                 {
                     // reject the message, will be sent to wait queue
-                    model.BasicReject(ea.DeliveryTag, false);
+                    await model.BasicRejectAsync(ea.DeliveryTag, false);
                     metrics.RetryScheduled.Add(1);
                     FireAndForget(new MessageRetryScheduled(
                         DateTime.UtcNow,
@@ -189,7 +189,7 @@ namespace SW.Bus
                 }
                 else
                 {
-                    model.BasicAck(ea.DeliveryTag, false);
+                    await model.BasicAckAsync(ea.DeliveryTag, false);
                     logger.LogError(ex,
                         @$"Failed to process message '{consumerDefinition.MessageTypeName}', in '{consumerDefinition.ServiceType.Name}'. Message {message}, Total retries {consumerDefinition.RetryCount}");
 
@@ -216,7 +216,7 @@ namespace SW.Bus
                 }
             }
         }
-        internal async Task RunNodeMessage(BasicDeliverEventArgs ea, IModel model,
+        internal async Task RunNodeMessage(BasicDeliverEventArgs ea, IChannel model,
             ICollection<ListenerDefinition> listeners, Func<Task> refreshConsumers)
         {
             var remainingRetryCount = busOptions.ListenRetryCount;
@@ -277,7 +277,7 @@ namespace SW.Bus
                     }
                 }
 
-                model.BasicAck(ea.DeliveryTag, false);
+                await model.BasicAckAsync(ea.DeliveryTag, false);
                 stopwatch.Stop();
                 metrics.ProcessingCompleted.Add(1);
                 metrics.ProcessingLatencyMs.Record(stopwatch.Elapsed.TotalMilliseconds);
@@ -289,7 +289,7 @@ namespace SW.Bus
                 if (remainingRetryCount != 0 && ex is not InvalidUserTokenException)
                 {
                     // reject the message, will be sent to wait queue
-                    model.BasicReject(ea.DeliveryTag, false);
+                    await model.BasicRejectAsync(ea.DeliveryTag, false);
                     metrics.RetryScheduled.Add(1);
                     await RunOnFail(svc, failMethod, ex, message);
                     logger.LogWarning(ex,
@@ -301,7 +301,7 @@ namespace SW.Bus
                 }
                 else
                 {
-                    model.BasicAck(ea.DeliveryTag, false);
+                    await model.BasicAckAsync(ea.DeliveryTag, false);
                     logger.LogError(ex,
                         @$"Failed to process message '{listenerDefinition?.MessageTypeName} ?? ?? message', in 
                         '{listenerDefinition?.ServiceType.Name ?? "reloading"}'. 
@@ -351,7 +351,7 @@ namespace SW.Bus
             }
         }
         
-        void TryBuildBusRequestContext(IServiceProvider serviceProvider,string messageName, IBasicProperties basicProperties,
+        void TryBuildBusRequestContext(IServiceProvider serviceProvider,string messageName, IReadOnlyBasicProperties basicProperties,
             int remainingRetries)
         {
             var remainingRetriesValue = new RequestValue("RemainingRetries", remainingRetries.ToString(),
@@ -430,7 +430,7 @@ namespace SW.Bus
         /// publisher's, null or not text — gives none: the message itself is still good, and failing
         /// it would only send it to retry.
         /// </remarks>
-        List<RequestValue> ReadPublishedValues(IBasicProperties basicProperties, params RequestValue[] reserved)
+        List<RequestValue> ReadPublishedValues(IReadOnlyBasicProperties basicProperties, params RequestValue[] reserved)
         {
             var values = new List<RequestValue>();
             if (basicProperties.Headers == null ||
@@ -459,16 +459,17 @@ namespace SW.Bus
         }
 
         
-        private Task PublishBad(IModel model, ReadOnlyMemory<byte> body, IBasicProperties messageProps, 
+        private async Task PublishBad(IChannel model, ReadOnlyMemory<byte> body, IReadOnlyBasicProperties messageProps, 
             string exchange, string routingKey, Exception ex)
         {
             const string exception = "exception";
 
-            var props = model.CreateBasicProperties();
+            var props = new BasicProperties();
             props.Headers = new Dictionary<string, object>();
 
+            // x-dotnet-pub-seq-no is the client's own confirm tracking header, not the publisher's.
             foreach (var (key, value) in messageProps.Headers?.Where(
-                         h => h.Key != "x-death") ?? new Dictionary<string, object>())
+                         h => h.Key != "x-death" && h.Key != Constants.PublishSequenceNumberHeader) ?? new Dictionary<string, object>())
                 props.Headers.Add(key, value);
 
             // total bad is used in case the message was moved from bad to process (using shovel) and failed again. so we keep history of failures
@@ -476,10 +477,8 @@ namespace SW.Bus
 
             props.Headers.Add($"{exception}{totalBad}", SerializeException(ex));
 
-            props.DeliveryMode = 2;
-            model.BasicPublish(exchange, routingKey, props, body);
-
-            return Task.CompletedTask;
+            props.DeliveryMode = DeliveryModes.Persistent;
+            await model.BasicPublishAsync(exchange, routingKey, false, props, body);
         }
 
         // some exceptions (thrown ones carry a TargetSite) are not serializable; the message is already

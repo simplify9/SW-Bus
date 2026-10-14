@@ -233,26 +233,26 @@ internal static class OperationalEventEnvelope
         return value.ToString();
     }
 
-    internal static string GetMessageId(RabbitMQ.Client.IBasicProperties props)
+    internal static string GetMessageId(RabbitMQ.Client.IReadOnlyBasicProperties props)
         => props?.MessageId
            ?? HeaderAsString(props?.Headers, "Id")
            ?? string.Empty;
 
-    internal static string GetCorrelationId(RabbitMQ.Client.IBasicProperties props)
+    internal static string GetCorrelationId(RabbitMQ.Client.IReadOnlyBasicProperties props)
         => props?.CorrelationId
            ?? HeaderAsString(props?.Headers, "X-Correlation-Id")
            ?? string.Empty;
 
-    internal static string GetCausationId(RabbitMQ.Client.IBasicProperties props)
+    internal static string GetCausationId(RabbitMQ.Client.IReadOnlyBasicProperties props)
         => HeaderAsString(props?.Headers, CausationIdHeader) ?? string.Empty;
 
-    internal static string GetTraceId(RabbitMQ.Client.IBasicProperties props)
+    internal static string GetTraceId(RabbitMQ.Client.IReadOnlyBasicProperties props)
         => HeaderAsString(props?.Headers, TraceIdHeader) ?? string.Empty;
 
-    internal static string GetSpanId(RabbitMQ.Client.IBasicProperties props)
+    internal static string GetSpanId(RabbitMQ.Client.IReadOnlyBasicProperties props)
         => HeaderAsString(props?.Headers, SpanIdHeader) ?? string.Empty;
 
-    internal static ActivityContext ExtractParentContext(RabbitMQ.Client.IBasicProperties props)
+    internal static ActivityContext ExtractParentContext(RabbitMQ.Client.IReadOnlyBasicProperties props)
     {
         var traceParent = HeaderAsString(props?.Headers, TraceParentHeader);
         if (string.IsNullOrWhiteSpace(traceParent))
