@@ -125,10 +125,30 @@ internal class BasicPublisher(
 
         try
         {
-            var publishChannel = await GetChannelAsync();
-            // With confirms on, this completes when the broker has the message, and throws when the
-            // broker refuses it or the connection is lost before it answers.
-            await publishChannel.BasicPublishAsync(exchange, messageTypeName.ToLower(), false, props, message);
+            using (var timeout = busOptions.PublishTimeout > TimeSpan.Zero
+                       ? new CancellationTokenSource(busOptions.PublishTimeout)
+                       : null)
+            {
+                var cancellationToken = timeout?.Token ?? CancellationToken.None;
+                try
+                {
+                    var publishChannel = await GetChannelAsync(cancellationToken);
+                    // With confirms on, this completes when the broker has the message, and throws when the
+                    // broker refuses it or the connection is lost before it answers.
+                    await publishChannel.BasicPublishAsync(exchange, messageTypeName.ToLower(), false, props, message,
+                        cancellationToken);
+                }
+                catch (OperationCanceledException) when (timeout?.IsCancellationRequested == true)
+                {
+                    // The channel may hold a half-sent message or a confirm still owed; the next publish of
+                    // this scope opens a fresh one instead.
+                    await DisposeChannelAsync();
+                    throw new BusException(
+                        $"The broker did not take '{messageTypeName}' within {busOptions.PublishTimeout.TotalSeconds:0.#} s; " +
+                        "it may be blocking publishers (a memory or disk alarm). The broker may or may not have the message.");
+                }
+            }
+
             stopwatch.Stop();
             activity?.SetTag("messaging.system", "rabbitmq");
             activity?.SetTag("messaging.destination.name", exchange);
@@ -190,12 +210,12 @@ internal class BasicPublisher(
         }
     }
 
-    private async Task<IChannel> GetChannelAsync()
+    private async Task<IChannel> GetChannelAsync(CancellationToken cancellationToken)
     {
         var current = channel;
         if (current is { IsClosed: false }) return current;
 
-        await channelLock.WaitAsync();
+        await channelLock.WaitAsync(cancellationToken);
         try
         {
             // Closed by the broker (a channel error) or never opened: open one. A channel that is
@@ -203,10 +223,10 @@ internal class BasicPublisher(
             if (channel is { IsClosed: false }) return channel;
             if (channel != null) await DisposeChannelAsync();
 
-            var connection = await busConnection.GetPublisherConnectionAsync();
+            var connection = await busConnection.GetPublisherConnectionAsync(cancellationToken);
             channel = await connection.CreateChannelAsync(new CreateChannelOptions(
                 publisherConfirmationsEnabled: busOptions.PublisherConfirms,
-                publisherConfirmationTrackingEnabled: busOptions.PublisherConfirms));
+                publisherConfirmationTrackingEnabled: busOptions.PublisherConfirms), cancellationToken);
             return channel;
         }
         finally
@@ -220,18 +240,32 @@ internal class BasicPublisher(
         var closing = channel;
         channel = null;
         if (closing == null) return;
-        try
+        await CloseBoundedAsync(closing);
+    }
+
+    /// <summary>
+    /// Closes a channel, waiting at most <see cref="BusConnection.CloseTimeout"/>. A broker that blocks
+    /// publishers stops reading the connection, so an unbounded close would hold the scope (an HTTP
+    /// request, a consumed message) until the alarm clears; past the bound it finishes in the background.
+    /// </summary>
+    internal static async Task CloseBoundedAsync(IChannel closing)
+    {
+        var close = Task.Run(async () =>
         {
-            if (closing.IsOpen) await closing.CloseAsync();
-        }
-        catch (Exception ex)
-        {
-            Trace.TraceWarning("Failed to close a publisher channel: {0}", ex.Message);
-        }
-        finally
-        {
-            await closing.DisposeAsync();
-        }
+            try
+            {
+                if (closing.IsOpen) await closing.CloseAsync();
+            }
+            catch (Exception ex)
+            {
+                Trace.TraceWarning("Failed to close a publisher channel: {0}", ex.Message);
+            }
+            finally
+            {
+                await closing.DisposeAsync();
+            }
+        });
+        await Task.WhenAny(close, Task.Delay(BusConnection.CloseTimeout));
     }
 
     public async ValueTask DisposeAsync() => await DisposeChannelAsync();

@@ -95,7 +95,9 @@ public class DrainAndRetryTests
         Assert.IsTrue(headers.ContainsKey("exception1"));
         Assert.IsTrue(headers.ContainsKey("source-node-id"));
         Assert.IsFalse(headers.ContainsKey("x-death"));
-        Assert.IsFalse(headers.ContainsKey(Constants.PublishSequenceNumberHeader));
+        // The copy is published with confirms, so the client stamps it with the tracking number of that
+        // publish (the original's number is dropped before copying).
+        Assert.IsTrue(headers.ContainsKey(Constants.PublishSequenceNumberHeader));
         Assert.AreEqual(DeliveryModes.Persistent, message.BasicProperties.DeliveryMode);
     }
 }

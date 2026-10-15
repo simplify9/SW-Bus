@@ -230,6 +230,15 @@ namespace SW.Bus
         public bool PublisherConfirms { get; set; } = true;
 
         /// <summary>
+        /// Gets or sets how long a publish may wait for the broker before it fails: to open its channel, to send,
+        /// and, with <see cref="PublisherConfirms"/>, for the confirm. A broker that blocks publishers (a memory or
+        /// disk alarm) otherwise holds every publishing request until the alarm clears.
+        /// A publish that times out throws; the broker may or may not have the message.
+        /// Default: 15 seconds. <see cref="TimeSpan.Zero"/> waits as long as it takes.
+        /// </summary>
+        public TimeSpan PublishTimeout { get; set; } = TimeSpan.FromSeconds(15);
+
+        /// <summary>
         /// Gets or sets how long stopping the bus waits for messages already being processed to finish
         /// and be acknowledged, after the consumers stop receiving new ones. Messages still running
         /// when it expires are returned to their queue when the channel closes.

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -24,19 +25,27 @@ namespace SW.Bus
         private readonly BusMetrics metrics;
 
         private readonly ILogger<ConsumerRunner> logger;
+        private readonly BusConnection busConnection;
+
+        // Dead-letter copies go out on a confirmed channel of the publisher connection, so a failed
+        // message is acknowledged only once the broker has its copy.
+        private readonly SemaphoreSlim deadLetterChannelLock = new(1, 1);
+        private IChannel deadLetterChannel;
 
         public ConsumerRunner(
             IServiceProvider sp,
             BusOptions busOptions,
             IOperationalEventPublisher operationalEventPublisher,
             BusMetrics metrics,
-            ILogger<ConsumerRunner> logger)
+            ILogger<ConsumerRunner> logger,
+            BusConnection busConnection)
         {
             this.sp = sp;
             this.busOptions = busOptions;
             this.operationalEventPublisher = operationalEventPublisher;
             this.metrics = metrics;
             this.logger = logger;
+            this.busConnection = busConnection;
         }
 
         internal async Task Run(BasicDeliverEventArgs ea, ConsumerDefinition consumerDefinition, IChannel model)
@@ -92,7 +101,7 @@ namespace SW.Bus
 
             try
             {
-                using var scope = sp.CreateScope();
+                await using var scope = sp.CreateAsyncScope();
                 TryBuildBusRequestContext(scope.ServiceProvider,consumerDefinition.MessageTypeName, ea.BasicProperties, remainingRetryCount);
 
                 var body = ea.Body;
@@ -189,11 +198,12 @@ namespace SW.Bus
                 }
                 else
                 {
-                    await model.BasicAckAsync(ea.DeliveryTag, false);
                     logger.LogError(ex,
                         @$"Failed to process message '{consumerDefinition.MessageTypeName}', in '{consumerDefinition.ServiceType.Name}'. Message {message}, Total retries {consumerDefinition.RetryCount}");
 
-                    await PublishBad(model, ea.Body, ea.BasicProperties, busOptions.DeadLetterExchange, consumerDefinition.BadRoutingKey, ex);
+                    if (!await TryPublishBad(model, ea, busOptions.DeadLetterExchange, consumerDefinition.BadRoutingKey, ex))
+                        return;
+                    await model.BasicAckAsync(ea.DeliveryTag, false);
                     metrics.DeadLetterMoved.Add(1);
                     FireAndForget(new MessageMovedToDeadLetter(
                         DateTime.UtcNow,
@@ -251,7 +261,7 @@ namespace SW.Bus
             object svc = null;
             try
             {
-                using var scope = sp.CreateScope();
+                await using var scope = sp.CreateAsyncScope();
 
                 var body = ea.Body;
                 message = Encoding.UTF8.GetString(body.ToArray());
@@ -301,15 +311,17 @@ namespace SW.Bus
                 }
                 else
                 {
-                    await model.BasicAckAsync(ea.DeliveryTag, false);
                     logger.LogError(ex,
                         @$"Failed to process message '{listenerDefinition?.MessageTypeName} ?? ?? message', in 
                         '{listenerDefinition?.ServiceType.Name ?? "reloading"}'. 
                            Message {message}, Total retries {busOptions.ListenRetryCount}");
 
-                    await PublishBad(model, ea.Body, ea.BasicProperties,busOptions.NodeDeadLetterExchange, busOptions.NodeBadRoutingKey, ex);
-                    metrics.DeadLetterMoved.Add(1);
-                    await RunOnFail(svc, failMethod, ex, message);
+                    if (await TryPublishBad(model, ea, busOptions.NodeDeadLetterExchange, busOptions.NodeBadRoutingKey, ex))
+                    {
+                        await model.BasicAckAsync(ea.DeliveryTag, false);
+                        metrics.DeadLetterMoved.Add(1);
+                        await RunOnFail(svc, failMethod, ex, message);
+                    }
                 }
 
                 FireAndForget(new MessageProcessingFailed(
@@ -459,7 +471,55 @@ namespace SW.Bus
         }
 
         
-        private async Task PublishBad(IChannel model, ReadOnlyMemory<byte> body, IReadOnlyBasicProperties messageProps, 
+        /// <summary>
+        /// Publishes the dead-letter copy and reports whether the broker confirmed it. When it did not, the
+        /// original is rejected instead of acknowledged: it goes to the retry queue and comes back after
+        /// RetryAfter to be dead-lettered again, rather than being lost.
+        /// </summary>
+        private async Task<bool> TryPublishBad(IChannel model, BasicDeliverEventArgs ea, string exchange,
+            string routingKey, Exception ex)
+        {
+            try
+            {
+                await PublishBad(ea.Body, ea.BasicProperties, exchange, routingKey, ex);
+                return true;
+            }
+            catch (Exception badEx)
+            {
+                logger.LogError(badEx,
+                    "Could not move a failed message to {RoutingKey}; it goes back to its retry queue instead.", routingKey);
+                await model.BasicRejectAsync(ea.DeliveryTag, false);
+                return false;
+            }
+        }
+
+        private async Task<IChannel> DeadLetterChannelAsync(CancellationToken cancellationToken)
+        {
+            var current = deadLetterChannel;
+            if (current is { IsClosed: false }) return current;
+
+            await deadLetterChannelLock.WaitAsync(cancellationToken);
+            try
+            {
+                if (deadLetterChannel is { IsClosed: false }) return deadLetterChannel;
+                if (deadLetterChannel != null)
+                {
+                    try { await deadLetterChannel.DisposeAsync(); }
+                    catch (Exception e) { logger.LogDebug(e, "Failed to dispose a closed dead-letter channel."); }
+                }
+
+                var connection = await busConnection.GetPublisherConnectionAsync(cancellationToken);
+                deadLetterChannel = await connection.CreateChannelAsync(new CreateChannelOptions(
+                    publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true), cancellationToken);
+                return deadLetterChannel;
+            }
+            finally
+            {
+                deadLetterChannelLock.Release();
+            }
+        }
+
+        private async Task PublishBad(ReadOnlyMemory<byte> body, IReadOnlyBasicProperties messageProps,
             string exchange, string routingKey, Exception ex)
         {
             const string exception = "exception";
@@ -478,7 +538,25 @@ namespace SW.Bus
             props.Headers.Add($"{exception}{totalBad}", SerializeException(ex));
 
             props.DeliveryMode = DeliveryModes.Persistent;
-            await model.BasicPublishAsync(exchange, routingKey, false, props, body);
+
+            using var timeout = busOptions.PublishTimeout > TimeSpan.Zero
+                ? new CancellationTokenSource(busOptions.PublishTimeout)
+                : null;
+            var cancellationToken = timeout?.Token ?? CancellationToken.None;
+            IChannel channel = null;
+            try
+            {
+                channel = await DeadLetterChannelAsync(cancellationToken);
+                await channel.BasicPublishAsync(exchange, routingKey, false, props, body, cancellationToken);
+            }
+            catch (OperationCanceledException) when (timeout?.IsCancellationRequested == true)
+            {
+                // The channel may owe a confirm or hold a half-sent message: the next dead letter opens a fresh one.
+                if (channel != null && ReferenceEquals(Interlocked.CompareExchange(ref deadLetterChannel, null, channel), channel))
+                    await BasicPublisher.CloseBoundedAsync(channel);
+                throw new BusException(
+                    $"The broker did not take the dead-letter copy for '{routingKey}' within {busOptions.PublishTimeout.TotalSeconds:0.#} s.");
+            }
         }
 
         // some exceptions (thrown ones carry a TargetSite) are not serializable; the message is already
