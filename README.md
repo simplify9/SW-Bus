@@ -903,6 +903,7 @@ services.AddBus(config =>
 
     // ── Publishing and shutdown ───────────────────────────────────────────
     config.PublisherConfirms = true;                     // a publish waits for the broker's confirm
+    config.PublishTimeout    = TimeSpan.FromSeconds(15); // a publish the broker hasn't taken by then throws
     config.DrainTimeout      = TimeSpan.FromSeconds(30); // wait for running messages on stop
 
     // ── Broadcast listeners ───────────────────────────────────────────────
@@ -1022,7 +1023,7 @@ dotnet test SW.Bus.IntegrationTests/SW.Bus.IntegrationTests.csproj
 
 **`ConcurrencyTests`**: a queue runs as many messages at once as its concurrency; at 1 it runs them one at a time in order; concurrency comes from the consumer options, then `AddQueueOption`, then `DefaultConsumerConcurrency`, and prefetch caps it; a refresh moves a consumer to a new concurrency without processing a message twice; a refresh applies a new prefetch; concurrent publishes from one scope and from many scopes all arrive.
 
-**`ConnectionTests`**: a publish against a stopped broker throws, and publishing resumes when it returns; a broker restart leaves exactly one consumer per queue (read through `IConsumerReader`) and on the node queue; a host whose broker is down at boot starts, reports not connected, and connects when the broker returns.
+**`ConnectionTests`**: a publish against a stopped broker throws, and publishing resumes when it returns; a publish the broker blocks (a memory alarm) fails after `PublishTimeout`, and publishing resumes when the alarm clears; the consumer connection is named after the application; a broker restart leaves exactly one consumer per queue (read through `IConsumerReader`) and on the node queue; a host whose broker is down at boot starts, reports not connected, and connects when the broker returns.
 
 **`DrainAndRetryTests`**: stopping lets running messages finish and acknowledge, and returns the ones not started; a message still running at the drain timeout returns to its queue; a failing message is retried its retry count and then moved to the bad queue with the same headers as before.
 
@@ -1077,8 +1078,14 @@ With `BusOptions.PublisherConfirms` (default true), `IPublish`, `IPublishWithVal
 
 - Each DI scope publishes on a channel of its own, opened on the scope's first publish and closed with the scope. The channel is safe to publish on from several threads of the scope.
 - A publish waits about one broker round trip (plus the broker's disk write for persistent messages) for its confirm. Publishes in parallel (for example `Task.WhenAll`) share that wait.
-- The client adds an `x-dotnet-pub-seq-no` header to each confirmed message, its own tracking number. It is not copied to the dead-letter copy of a failed message.
+- The client adds an `x-dotnet-pub-seq-no` header to each confirmed message, its own tracking number. The original's is not copied to the dead-letter copy of a failed message; the copy carries the number of its own confirmed publish.
 - The publisher connection and the consumer connection are separate, as before, so the broker's flow control on a busy publisher never holds back consumer acknowledgements.
+- A publish waits at most `BusOptions.PublishTimeout` (default 15 s) to open its channel, send, and be confirmed, then throws a `BusException`. A broker short of memory or disk blocks every connection that publishes until the alarm clears; without the timeout, each publishing request would wait that long. A publish that timed out may or may not have reached the broker. `TimeSpan.Zero` waits as long as it takes.
+- A channel's close is bounded too, so a scope that ends while the broker blocks publishers is not held either.
+
+### Dead-lettering
+
+A message that fails its last retry is copied to its bad queue on a confirmed channel of the publisher connection, and only then acknowledged. If the broker does not confirm the copy (it is down, or blocking publishers past `PublishTimeout`), the message is rejected to its retry queue instead, and comes back after its retry delay to be dead-lettered again. A failed message is therefore never lost between the two, though a crash between the copy and the acknowledgement can leave it in the bad queue twice.
 
 ### Connecting and recovery
 

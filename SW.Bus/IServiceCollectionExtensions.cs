@@ -109,7 +109,9 @@ namespace SW.Bus
             services.AddSingleton(new BusConnectionNames
             {
                 Publisher = $"{Assembly.GetCallingAssembly().GetName().Name} Publisher",
-                Consumer = $"{typeof(IServiceCollectionExtensions).Assembly.GetName().Name} Consumer"
+                // Named after the application, like the publisher, so the broker's connection list tells
+                // services apart; every service's consumer connection used to be "SW.Bus Consumer".
+                Consumer = $"{Assembly.GetCallingAssembly().GetName().Name} Consumer"
             });
             services.AddSingleton<BusConnection>();
             services.AddSingleton<IBusConnectionStatus>(sp => sp.GetRequiredService<BusConnection>());

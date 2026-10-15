@@ -33,6 +33,29 @@ public static class Broker
         await Exec(container, "rabbitmqctl", "await_startup");
     }
 
+    /// <summary>
+    /// Raises a memory alarm, as a broker short of memory does: it blocks every connection that publishes,
+    /// and stops reading from it, until the alarm clears. Consumers are not blocked.
+    /// </summary>
+    public static async Task BlockPublishers(RabbitMqContainer container) =>
+        await Exec(container, "rabbitmqctl", "set_vm_memory_high_watermark", "absolute", "1");
+
+    public static async Task UnblockPublishers(RabbitMqContainer container) =>
+        await Exec(container, "rabbitmqctl", "set_vm_memory_high_watermark", "0.4");
+
+    /// <summary>The client-provided names of the broker's connections, read through the management API.</summary>
+    public static async Task<string[]> ConnectionNames(RabbitMqContainer container)
+    {
+        using var all = await Management(container, "/api/connections");
+        if (all == null) return [];
+        return all.RootElement.EnumerateArray()
+            .Select(c => c.TryGetProperty("client_properties", out var p) && p.TryGetProperty("connection_name", out var n)
+                ? n.GetString()
+                : null)
+            .Where(n => n != null)
+            .ToArray()!;
+    }
+
     private static async Task Exec(RabbitMqContainer container, params string[] command)
     {
         var result = await container.ExecAsync(command);
