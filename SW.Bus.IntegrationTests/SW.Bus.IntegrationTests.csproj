@@ -14,6 +14,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- ContractAttribute: the library itself stays on 10.0.0 and finds the attribute by name. -->
+    <PackageReference Include="SimplyWorks.PrimitiveTypes" Version="10.0.2" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\SW.Bus\SW.Bus.csproj" />
     <ProjectReference Include="..\SW.Bus.RabbitMqExtensions\SW.Bus.RabbitMqExtensions.csproj" />
   </ItemGroup>

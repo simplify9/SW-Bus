@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
@@ -28,6 +30,25 @@ internal class BasicPublisher(
     private readonly SemaphoreSlim channelLock = new(1, 1);
     private IChannel channel;
 
+    // A type's attributes never change, so each type is looked up once per process.
+    private static readonly ConcurrentDictionary<Type, string> Contracts = new();
+
+    /// <summary>
+    /// "key@major" when the type declares a well-formed SW.PrimitiveTypes.ContractAttribute, else null.
+    /// Found by name, not by type: the attribute exists from PrimitiveTypes 10.0.2, and the bus still
+    /// works with 10.0.0, so applications that never label a message don't have to upgrade.
+    /// </summary>
+    internal static string ContractOf(Type type) => Contracts.GetOrAdd(type, t =>
+    {
+        var attribute = t.GetCustomAttributes(inherit: false)
+            .FirstOrDefault(a => a.GetType().FullName == "SW.PrimitiveTypes.ContractAttribute");
+        if (attribute == null) return null;
+        var attributeType = attribute.GetType();
+        return attributeType.GetProperty("IsWellFormed")?.GetValue(attribute) is true
+            ? attributeType.GetProperty("Id")?.GetValue(attribute) as string
+            : null;
+    });
+
     async public Task Publish<TMessage>(TMessage message, string exchange, byte? priority = null)
     {
         var serializerOptions = new JsonSerializerOptions()
@@ -36,16 +57,16 @@ internal class BasicPublisher(
         };
         var body = JsonSerializer.Serialize(message,message.GetType(), serializerOptions);
         
-        await Publish(message.GetType().Name, body,exchange, priority);
+        await Publish(message.GetType().Name, body,exchange, priority, contract: ContractOf(message.GetType()));
     }
 
     public async Task Publish(string messageTypeName, string message, string exchange, byte? priority = null,
-        string valuesHeader = null)
+        string valuesHeader = null, string contract = null)
     {
         try
         {
             var body = Encoding.UTF8.GetBytes(message);
-            await Publish(messageTypeName, body, exchange, priority, valuesHeader);
+            await Publish(messageTypeName, body, exchange, priority, valuesHeader, contract);
         }
         catch (Exception e)
         {
@@ -55,8 +76,9 @@ internal class BasicPublisher(
     }
 
     /// <param name="valuesHeader">Written by <see cref="PublishedValues.ToHeader"/>, which also checks its size.</param>
+    /// <param name="contract">The body's contract, "key@major" (<see cref="BusOptions.ContractHeaderName"/>).</param>
     public async Task Publish(string messageTypeName, byte[] message, string exchange, byte? priority = null,
-        string valuesHeader = null)
+        string valuesHeader = null, string contract = null)
     {
         var activity = BusDiagnostics.ActivitySource.StartActivity($"bus.publish {messageTypeName}", ActivityKind.Producer);
         var stopwatch = Stopwatch.StartNew();
@@ -100,6 +122,9 @@ internal class BasicPublisher(
         // value cannot collide with a header the bus itself sets.
         if (valuesHeader != null)
             props.Headers[RequestContext.ValuesHeaderName] = valuesHeader;
+
+        if (contract != null)
+            props.Headers[BusOptions.ContractHeaderName] = contract;
 
         props.Headers.Add(BusOptions.SourceNodeIdHeaderName,busOptions.NodeId);
         props.Headers.Add("Id", props.MessageId);

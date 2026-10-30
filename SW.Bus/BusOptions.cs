@@ -12,6 +12,12 @@ namespace SW.Bus
     {
         private const string NodeMessageName = "__broadcast";
         internal const string SourceNodeIdHeaderName = "source-node-id";
+
+        /// <summary>
+        /// The header carrying the published type's contract, "key@major", when the type declares one with
+        /// SW.PrimitiveTypes.ContractAttribute (PrimitiveTypes 10.0.2 and later). Absent otherwise.
+        /// </summary>
+        public const string ContractHeaderName = "contract";
         const string versionPrefix = "v3.";
         private readonly string environment;
         
