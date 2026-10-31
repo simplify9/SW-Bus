@@ -157,6 +157,14 @@ They travel in one `request-context-values` header and reach the consumer as `Se
 
 > **Never put a secret in a value.** Headers are readable by anything that can read the queue, and a message that fails for good keeps them in its dead-letter queue, which the error-queue API returns.
 
+Headers on every message, such as which deployment published it (`BusOptions.Headers`):
+
+```csharp
+services.AddBus(o => o.Headers["deployment"] = configuration["Deployment:Id"]);
+```
+
+A header the bus sets itself (`contract`, trace, user, `Id`...) keeps its value when a name clashes, and an empty value is left out. The same caution about secrets applies.
+
 ---
 
 ## Consuming Messages

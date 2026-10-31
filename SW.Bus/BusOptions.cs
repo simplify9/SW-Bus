@@ -195,6 +195,13 @@ namespace SW.Bus
         public InvalidUserTokenBehavior OnInvalidUserToken { get; set; } = InvalidUserTokenBehavior.Fail;
         
         /// <summary>
+        /// Headers stamped on every published message, such as which deployment published it. A header the bus
+        /// sets itself (contract, trace, user, correlation, Id...) keeps its value when a name here clashes with it.
+        /// Names are compared case-insensitively. Empty by default.
+        /// </summary>
+        public IDictionary<string, string> Headers { get; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
         /// Gets or sets the application name used in queue and exchange naming.
         /// When set, queues are named: {Exchange}.{ApplicationName}.{ConsumerName}.{MessageName}
         /// When not set, queues are named: {Exchange}.{ConsumerName}.{MessageName}
