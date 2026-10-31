@@ -129,6 +129,11 @@ internal class BasicPublisher(
         props.Headers.Add(BusOptions.SourceNodeIdHeaderName,busOptions.NodeId);
         props.Headers.Add("Id", props.MessageId);
 
+        // Last, so a header the bus sets itself is never replaced (and Add above can't collide).
+        foreach (var (name, value) in busOptions.Headers)
+            if (!string.IsNullOrEmpty(value) && !props.Headers.Keys.Any(k => string.Equals(k, name, StringComparison.OrdinalIgnoreCase)))
+                props.Headers[name] = value;
+
         metrics.PublishStarted.Add(1);
         FireAndForget(new PublishStarted(
             DateTime.UtcNow,
